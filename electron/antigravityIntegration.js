@@ -8,13 +8,14 @@ const MARKER = 'AtrisTracker statusline telemetry bridge';
 class AntigravityIntegration {
   constructor(options = {}) {
     this.home = options.home || os.homedir();
+    this.platform = options.platform || process.platform;
     this.baseDir = path.join(this.home, '.gemini', 'antigravity-cli');
     this.settingsPath = path.join(this.baseDir, 'settings.json');
     this.cachePath = path.join(this.baseDir, 'atris-statusline-state.json');
     this.backupPath = path.join(this.baseDir, 'atris-statusline-backup.json');
     this.scriptPath = path.join(
       this.baseDir,
-      process.platform === 'win32' ? 'atris-statusline-bridge.ps1' : 'atris-statusline-bridge.sh'
+      this.platform === 'win32' ? 'atris-statusline-bridge.ps1' : 'atris-statusline-bridge.sh'
     );
   }
 
@@ -144,15 +145,30 @@ class AntigravityIntegration {
   }
 
   getBridgeCommand() {
-    if (process.platform === 'win32') {
-      return `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${this.scriptPath}"`;
+    if (this.platform === 'win32') {
+      // Antigravity tokenizes statusLine.command itself. Passing a quoted path to
+      // PowerShell -File makes those quote characters survive into -File on
+      // Windows, producing "Illegal characters in path". -EncodedCommand avoids
+      // shell/path quoting entirely while still invoking the local bridge script.
+      const escapedScript = this.scriptPath.replace(/'/g, "''");
+      const launcher = `$ErrorActionPreference = 'Stop'; & '${escapedScript}'`;
+      const encoded = Buffer.from(launcher, 'utf16le').toString('base64');
+      return `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}`;
     }
     return `"${this.scriptPath}"`;
   }
 
+  isLegacyWindowsBridgeCommand(command) {
+    if (this.platform !== 'win32' || typeof command !== 'string') return false;
+    return (
+      command.includes(path.basename(this.scriptPath)) &&
+      /(?:^|\s)-File(?:\s|$)/i.test(command)
+    );
+  }
+
   isOurCommand(command) {
     if (typeof command !== 'string') return false;
-    return command.includes(path.basename(this.scriptPath));
+    return command === this.getBridgeCommand() || command.includes(path.basename(this.scriptPath));
   }
 
   getStatus() {
@@ -175,11 +191,51 @@ class AntigravityIntegration {
 
     return {
       enabled: this.isOurCommand(command),
+      needs_repair: this.isLegacyWindowsBridgeCommand(command),
       settings_found: fs.existsSync(this.settingsPath),
       settings_error: settingsError,
       settings_path: this.settingsPath,
       last_telemetry_at: lastTelemetryAt,
     };
+  }
+
+  originalStatusLineFromBackup() {
+    const backup = this.readJson(this.backupPath, null);
+    if (backup?.marker !== MARKER || !backup.had_status_line) return null;
+    return backup.status_line || null;
+  }
+
+  repairIfNeeded() {
+    const document = this.readSettingsDocument();
+    const settings = document.settings;
+    const currentStatusLine = settings.statusLine || null;
+    const currentCommand = currentStatusLine?.command || '';
+    if (!this.isOurCommand(currentCommand)) return this.getStatus();
+
+    const desiredCommand = this.getBridgeCommand();
+    const bridgeMissing = !fs.existsSync(this.scriptPath);
+    if (currentCommand === desiredCommand && !bridgeMissing) return this.getStatus();
+
+    const originalStatusLine = this.originalStatusLineFromBackup();
+    this.writeBridgeScript(originalStatusLine?.command || '');
+
+    settings.statusLine = {
+      ...(currentStatusLine || {}),
+      type: 'command',
+      command: desiredCommand,
+      enabled: true,
+    };
+
+    // If AtrisTracker originally created the status line, keep Antigravity's
+    // built-in status line visible and use our custom command only as a silent
+    // telemetry tap.
+    const backup = this.readJson(this.backupPath, null);
+    if (backup?.marker === MARKER && backup.had_status_line === false) {
+      settings.statusLine.stack_with_default = true;
+    }
+
+    this.writeJsonAtomic(this.settingsPath, settings);
+    return this.getStatus();
   }
 
   enable() {
@@ -188,7 +244,7 @@ class AntigravityIntegration {
     const settings = document.settings;
     const currentStatusLine = settings.statusLine || null;
     const currentCommand = currentStatusLine?.command || '';
-    if (this.isOurCommand(currentCommand)) return this.getStatus();
+    if (this.isOurCommand(currentCommand)) return this.repairIfNeeded();
 
     this.writeJsonAtomic(this.backupPath, {
       marker: MARKER,
@@ -202,9 +258,14 @@ class AntigravityIntegration {
 
     this.writeBridgeScript(currentCommand);
     settings.statusLine = {
+      ...(currentStatusLine || {}),
       type: 'command',
       command: this.getBridgeCommand(),
+      enabled: true,
     };
+    if (!currentStatusLine) {
+      settings.statusLine.stack_with_default = true;
+    }
     this.writeJsonAtomic(this.settingsPath, settings);
     return this.getStatus();
   }
@@ -267,16 +328,16 @@ class AntigravityIntegration {
   }
 
   writeBridgeScript(previousCommand) {
-    if (process.platform === 'win32') {
+    if (this.platform === 'win32') {
       const escapedCache = this.cachePath.replace(/'/g, "''");
       const escapedPrevious = String(previousCommand || '').replace(/'/g, "''");
-      const script = `# ${MARKER}\n$ErrorActionPreference = 'SilentlyContinue'\n$payload = [Console]::In.ReadToEnd()\n$cachePath = '${escapedCache}'\n$tempPath = $cachePath + '.tmp-' + $PID\n[System.IO.File]::WriteAllText($tempPath, $payload, [System.Text.UTF8Encoding]::new($false))\nMove-Item -Force $tempPath $cachePath\n$previous = '${escapedPrevious}'\nif ($previous) {\n  $payload | & cmd.exe /d /s /c $previous\n} else {\n  Write-Output 'AtrisTracker telemetry aktif'\n}\n`;
+      const script = `# ${MARKER}\n$ErrorActionPreference = 'SilentlyContinue'\n$payload = [Console]::In.ReadToEnd()\n$cachePath = '${escapedCache}'\n$tempPath = $cachePath + '.tmp-' + $PID\n[System.IO.File]::WriteAllText($tempPath, $payload, [System.Text.UTF8Encoding]::new($false))\nMove-Item -Force $tempPath $cachePath\n$previous = '${escapedPrevious}'\nif ($previous) {\n  $payload | & cmd.exe /d /s /c $previous\n}\nexit 0\n`;
       fs.writeFileSync(this.scriptPath, script, 'utf8');
       return;
     }
 
     const shellQuote = (value) => `'${String(value).replace(/'/g, `'"'"'`)}'`;
-    const script = `#!/bin/sh\n# ${MARKER}\nCACHE=${shellQuote(this.cachePath)}\nPREVIOUS=${shellQuote(previousCommand || '')}\nTMP="$CACHE.tmp-$$"\ncat > "$TMP"\nmv "$TMP" "$CACHE"\nif [ -n "$PREVIOUS" ]; then\n  cat "$CACHE" | sh -c "$PREVIOUS"\nelse\n  printf '%s\\n' 'AtrisTracker telemetry aktif'\nfi\n`;
+    const script = `#!/bin/sh\n# ${MARKER}\nCACHE=${shellQuote(this.cachePath)}\nPREVIOUS=${shellQuote(previousCommand || '')}\nTMP="$CACHE.tmp-$$"\ncat > "$TMP"\nmv "$TMP" "$CACHE"\nif [ -n "$PREVIOUS" ]; then\n  cat "$CACHE" | sh -c "$PREVIOUS"\nfi\n`;
     fs.writeFileSync(this.scriptPath, script, { encoding: 'utf8', mode: 0o755 });
     try {
       fs.chmodSync(this.scriptPath, 0o755);
