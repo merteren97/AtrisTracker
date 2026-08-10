@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. v1.0.2 or 1.0.2)'
+        description: 'Release version (e.g. v1.0.6 or 1.0.6)'
         required: true
       draft:
         description: 'Create Draft Release'
@@ -31,88 +31,61 @@ jobs:
         os: [windows-latest, ubuntu-latest]
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v4
       - name: Determine Release Version
         id: release
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             RAW_VERSION="${{ github.event.inputs.version }}"
-            if [[ "$RAW_VERSION" == v* ]]; then
-              TAG_NAME="$RAW_VERSION"
-            else
-              TAG_NAME="v$RAW_VERSION"
-            fi
+            [[ "$RAW_VERSION" == v* ]] && TAG_NAME="$RAW_VERSION" || TAG_NAME="v$RAW_VERSION"
           else
             TAG_NAME="${GITHUB_REF#refs/tags/}"
           fi
-
           VERSION="${TAG_NAME#v}"
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
             echo "Invalid release version: $TAG_NAME"
             exit 1
           fi
-
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'npm'
-
-      - name: Synchronize Package Version
-        run: npm version "${{ steps.release.outputs.version }}" --no-git-tag-version --allow-same-version
-
-      - name: Install Dependencies
-        run: npm install --no-audit --no-fund
-
+          cache: npm
+      - run: npm version "${{ steps.release.outputs.version }}" --no-git-tag-version --allow-same-version
+      - run: npm install --no-audit --no-fund
+      - run: npm run test:backend
       - name: Install Linux Icon Tooling
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends imagemagick
-
       - name: Prepare Linux PNG Icon Set
         if: matrix.os == 'ubuntu-latest'
         run: npm run prepare:linux-icons
-
-      - name: Build Web Assets (Vite)
-        run: npm run build
-
-      - name: Build Windows Installer and Portable Binary
+      - run: npm run build
+      - name: Build Windows NSIS Installer
         if: matrix.os == 'windows-latest'
-        run: npx electron-builder --win --publish never --config.directories.output=release
-
-      - name: Verify Windows Artifacts
+        run: npx electron-builder --win nsis --publish never --config.directories.output=release
+      - name: Verify Windows Installer and Update Metadata
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
           $installer = 'release/AtrisTracker-Setup-${{ steps.release.outputs.version }}.exe'
-          $portable = 'release/AtrisTracker-Portable-${{ steps.release.outputs.version }}.exe'
-
-          if (-not (Test-Path $installer)) { throw "Missing installer artifact: $installer" }
-          if (-not (Test-Path $portable)) { throw "Missing portable artifact: $portable" }
-
+          if (-not (Test-Path $installer)) { throw "Missing installer: $installer" }
+          if (-not (Test-Path 'release/latest.yml')) { throw 'Missing latest.yml' }
+          $blockmaps = Get-ChildItem release -Filter '*.blockmap'
+          if ($blockmaps.Count -lt 1) { throw 'Missing NSIS blockmap' }
       - name: Build Linux Packages
         if: matrix.os == 'ubuntu-latest'
-        run: npx electron-builder --linux --publish never --config.directories.output=release
-
+        run: npx electron-builder --linux AppImage deb --publish never --config.directories.output=release
       - name: Verify Linux Artifacts
         if: matrix.os == 'ubuntu-latest'
         run: |
-          APPIMAGE="release/AtrisTracker-${{ steps.release.outputs.version }}-x86_64.AppImage"
-          DEB="release/AtrisTracker-${{ steps.release.outputs.version }}-amd64.deb"
-
-          test -s "$APPIMAGE" || { echo "Missing AppImage: $APPIMAGE"; exit 1; }
-          test -s "$DEB" || { echo "Missing Debian package: $DEB"; exit 1; }
-
-          echo "Verified $APPIMAGE"
-          echo "Verified $DEB"
-
+          test -s "release/AtrisTracker-${{ steps.release.outputs.version }}-x86_64.AppImage"
+          test -s "release/AtrisTracker-${{ steps.release.outputs.version }}-amd64.deb"
+          test -s release/latest-linux.yml
       - name: Upload Artifacts to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -124,6 +97,7 @@ jobs:
             release/*.exe
             release/*.AppImage
             release/*.deb
-            release/*.zip
+            release/*.yml
+            release/*.blockmap
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
