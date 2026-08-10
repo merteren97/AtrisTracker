@@ -10,16 +10,13 @@ class UsageDatabase {
 
   async init() {
     const SQL = await initSqlJs();
-
-    // Ensure directory exists
     const dir = path.dirname(this.dbPath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
 
     if (fs.existsSync(this.dbPath)) {
-      const filebuffer = fs.readFileSync(this.dbPath);
-      this.db = new SQL.Database(filebuffer);
+      this.db = new SQL.Database(fs.readFileSync(this.dbPath));
     } else {
       this.db = new SQL.Database();
     }
@@ -30,8 +27,7 @@ class UsageDatabase {
 
   save() {
     if (!this.db) return;
-    const data = this.db.export();
-    const buffer = Buffer.from(data);
+    const buffer = Buffer.from(this.db.export());
     fs.writeFileSync(this.dbPath, buffer);
   }
 
@@ -46,6 +42,8 @@ class UsageDatabase {
         last_login TEXT NOT NULL
       );
 
+      -- v1 usage_snapshots is intentionally kept for backwards compatibility,
+      -- but it contained heuristic/fallback data in older AtrisTracker builds.
       CREATE TABLE IF NOT EXISTS usage_snapshots (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         tool TEXT NOT NULL,
@@ -60,142 +58,273 @@ class UsageDatabase {
         timestamp TEXT NOT NULL
       );
 
+      -- v2 stores only provider-observed quota values. Window fields are nullable
+      -- because a provider can temporarily omit one of the windows.
+      CREATE TABLE IF NOT EXISTS quota_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tool TEXT NOT NULL,
+        account_email TEXT NOT NULL,
+        five_hour_used_percent REAL,
+        five_hour_reset_at TEXT,
+        weekly_used_percent REAL,
+        weekly_reset_at TEXT,
+        source TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_quota_tool_account_id
+        ON quota_snapshots(tool, account_email, id DESC);
+
       CREATE TABLE IF NOT EXISTS app_settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+
+      -- Remove synthetic identities created by the pre-v2 heuristic scanner.
+      DELETE FROM accounts
+       WHERE email IN ('Active Gemini Account', 'Active Codex Account', 'Active Claude Account')
+          OR (tool = 'claudecode' AND email = 'mert@anthropic.com');
     `);
   }
 
-  // Record an account
-  saveAccount(tool, email) {
-    if (!this.db) return;
-    const id = `${tool}:${email}`;
+  queryAll(sql, params = []) {
+    if (!this.db) return [];
+    const stmt = this.db.prepare(sql);
+    try {
+      stmt.bind(params);
+      const rows = [];
+      while (stmt.step()) rows.push(stmt.getAsObject());
+      return rows;
+    } finally {
+      stmt.free();
+    }
+  }
+
+  queryOne(sql, params = []) {
+    return this.queryAll(sql, params)[0] || null;
+  }
+
+  normalizeEmail(email) {
+    return typeof email === 'string' ? email.trim() : '';
+  }
+
+  saveAccount(tool, email, active = true) {
+    if (!this.db) return null;
+    const normalizedEmail = this.normalizeEmail(email);
+    if (!tool || !normalizedEmail) return null;
+
+    const id = `${tool}:${normalizedEmail.toLowerCase()}`;
     const now = new Date().toISOString();
 
-    if (tool === 'antigravity') {
-      this.db.run(`UPDATE accounts SET active = 0 WHERE tool = ?`, [tool]);
+    if (active) {
+      this.db.run('UPDATE accounts SET active = 0 WHERE tool = ?', [tool]);
     }
 
     this.db.run(
-      `INSERT OR REPLACE INTO accounts (id, tool, email, active, created_at, last_login) VALUES (?, ?, ?, 1, ?, ?)`,
-      [id, tool, email, now, now]
+      `INSERT INTO accounts (id, tool, email, active, created_at, last_login)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET
+         email = excluded.email,
+         active = excluded.active,
+         last_login = excluded.last_login`,
+      [id, tool, normalizedEmail, active ? 1 : 0, now, now]
     );
     this.save();
+    return id;
   }
 
-  // Record a new usage snapshot
   addSnapshot(snapshot) {
-    if (!this.db) return;
+    if (!this.db || !snapshot) return false;
     const {
       tool,
       account_email,
-      usage_percent,
-      limit_count,
-      used_count,
       rolling_5h_percent,
       next_5h_reset_at,
+      weekly_usage_percent,
       weekly_usage_count,
       weekly_reset_at,
+      source = 'provider',
     } = snapshot;
 
-    const timestamp = new Date().toISOString();
+    const email = this.normalizeEmail(account_email);
+    if (!tool || !email) return false;
 
-    if (account_email) {
-      this.saveAccount(tool, account_email);
-    }
+    const fiveHour = this.clampPercent(rolling_5h_percent);
+    const weekly = this.clampPercent(
+      weekly_usage_percent !== undefined ? weekly_usage_percent : weekly_usage_count
+    );
+    const fiveHourReset = this.normalizeIso(next_5h_reset_at);
+    const weeklyReset = this.normalizeIso(weekly_reset_at);
+
+    // A scanner may discover an account before the provider exposes quota data.
+    // In that case record the account, but never write invented zero/default usage.
+    this.saveAccount(tool, email, true);
+    if (fiveHour === null && weekly === null) return false;
+
+    const latest = this.queryOne(
+      `SELECT five_hour_used_percent, five_hour_reset_at, weekly_used_percent, weekly_reset_at, source
+       FROM quota_snapshots
+       WHERE tool = ? AND account_email = ?
+       ORDER BY id DESC LIMIT 1`,
+      [tool, email]
+    );
+
+    const effective = {
+      fiveHour: fiveHour !== null ? fiveHour : this.clampPercent(latest?.five_hour_used_percent),
+      fiveHourReset: fiveHourReset || latest?.five_hour_reset_at || null,
+      weekly: weekly !== null ? weekly : this.clampPercent(latest?.weekly_used_percent),
+      weeklyReset: weeklyReset || latest?.weekly_reset_at || null,
+    };
+
+    const unchanged =
+      latest &&
+      this.sameNullableNumber(latest.five_hour_used_percent, effective.fiveHour) &&
+      (latest.five_hour_reset_at || null) === effective.fiveHourReset &&
+      this.sameNullableNumber(latest.weekly_used_percent, effective.weekly) &&
+      (latest.weekly_reset_at || null) === effective.weeklyReset &&
+      latest.source === source;
+
+    if (unchanged) return false;
 
     this.db.run(
-      `INSERT INTO usage_snapshots (
-        tool, account_email, usage_percent, limit_count, used_count,
-        rolling_5h_percent, next_5h_reset_at, weekly_usage_count, weekly_reset_at, timestamp
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO quota_snapshots (
+         tool, account_email, five_hour_used_percent, five_hour_reset_at,
+         weekly_used_percent, weekly_reset_at, source, fetched_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         tool,
-        account_email || 'default',
-        usage_percent,
-        limit_count,
-        used_count,
-        rolling_5h_percent,
-        next_5h_reset_at,
-        weekly_usage_count,
-        weekly_reset_at,
-        timestamp,
+        email,
+        effective.fiveHour,
+        effective.fiveHourReset,
+        effective.weekly,
+        effective.weeklyReset,
+        source,
+        new Date().toISOString(),
       ]
     );
     this.save();
+    return true;
   }
 
-  // Get latest snapshot for a tool
+  clampPercent(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const num = Number(value);
+    if (!Number.isFinite(num)) return null;
+    return Math.round(Math.max(0, Math.min(100, num)) * 10) / 10;
+  }
+
+  normalizeIso(value) {
+    if (!value) return null;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  }
+
+  sameNullableNumber(a, b) {
+    const left = this.clampPercent(a);
+    const right = this.clampPercent(b);
+    return left === right;
+  }
+
+  toLegacyShape(row) {
+    if (!row) return null;
+    return {
+      id: row.id,
+      tool: row.tool,
+      account_email: row.account_email,
+      usage_percent: row.five_hour_used_percent,
+      limit_count: row.five_hour_used_percent === null ? null : 100,
+      used_count: row.five_hour_used_percent,
+      rolling_5h_percent: row.five_hour_used_percent,
+      next_5h_reset_at: row.five_hour_reset_at,
+      weekly_usage_count: row.weekly_used_percent,
+      weekly_usage_percent: row.weekly_used_percent,
+      weekly_reset_at: row.weekly_reset_at,
+      source: row.source,
+      timestamp: row.fetched_at,
+    };
+  }
+
   getLatestSnapshot(tool) {
     if (!this.db) return null;
-    const res = this.db.exec(
-      `SELECT * FROM usage_snapshots WHERE tool = '${tool}' ORDER BY id DESC LIMIT 1`
+    const row = this.queryOne(
+      `SELECT q.*
+       FROM quota_snapshots q
+       LEFT JOIN accounts a
+         ON a.tool = q.tool AND a.email = q.account_email
+       WHERE q.tool = ?
+       ORDER BY COALESCE(a.active, 0) DESC, q.id DESC
+       LIMIT 1`,
+      [tool]
     );
-    if (!res || res.length === 0 || !res[0].values.length) return null;
-
-    const columns = res[0].columns;
-    const values = res[0].values[0];
-    const obj = {};
-    columns.forEach((col, idx) => {
-      obj[col] = values[idx];
-    });
-    return obj;
+    return this.toLegacyShape(row);
   }
 
-  // Get all registered accounts for a specific tool
   getAccountsByTool(tool) {
     if (!this.db) return [];
-    const res = this.db.exec(
-      `SELECT * FROM accounts WHERE tool = '${tool}' ORDER BY active DESC, last_login DESC`
+    return this.queryAll(
+      `SELECT a.*,
+              (SELECT MAX(q.fetched_at)
+                 FROM quota_snapshots q
+                WHERE q.tool = a.tool AND q.account_email = a.email) AS last_snapshot_at
+       FROM accounts a
+       WHERE a.tool = ?
+       ORDER BY a.active DESC, a.last_login DESC`,
+      [tool]
     );
-    if (!res || res.length === 0) return [];
-
-    const columns = res[0].columns;
-    return res[0].values.map((row) => {
-      const obj = {};
-      columns.forEach((col, idx) => {
-        obj[col] = row[idx];
-      });
-      return obj;
-    });
   }
 
-  // Get latest snapshot for a specific account
+  getActiveAccounts() {
+    if (!this.db) return [];
+    return this.queryAll(
+      'SELECT * FROM accounts WHERE active = 1 ORDER BY tool, last_login DESC'
+    );
+  }
+
   getLatestSnapshotByAccount(tool, email) {
-    if (!this.db || !email) return this.getLatestSnapshot(tool);
-    const res = this.db.exec(
-      `SELECT * FROM usage_snapshots WHERE tool = '${tool}' AND account_email = '${email}' ORDER BY id DESC LIMIT 1`
+    if (!this.db) return null;
+    if (!email) return this.getLatestSnapshot(tool);
+    const row = this.queryOne(
+      `SELECT * FROM quota_snapshots
+       WHERE tool = ? AND account_email = ?
+       ORDER BY id DESC LIMIT 1`,
+      [tool, this.normalizeEmail(email)]
     );
-    if (!res || res.length === 0 || !res[0].values.length) return this.getLatestSnapshot(tool);
-
-    const columns = res[0].columns;
-    const values = res[0].values[0];
-    const obj = {};
-    columns.forEach((col, idx) => {
-      obj[col] = values[idx];
-    });
-    return obj;
+    return this.toLegacyShape(row);
   }
 
-  // Get usage history for a specific account
+  getUsageHistory(tool, limit = 20) {
+    if (!this.db) return [];
+    const safeLimit = this.normalizeLimit(limit);
+    const rows = this.queryAll(
+      `SELECT * FROM quota_snapshots
+       WHERE tool = ? ORDER BY id DESC LIMIT ?`,
+      [tool, safeLimit]
+    );
+    return rows.reverse().map((row) => this.toLegacyShape(row));
+  }
+
   getUsageHistoryByAccount(tool, email, limit = 20) {
     if (!this.db) return [];
-    const query = email
-      ? `SELECT * FROM usage_snapshots WHERE tool = '${tool}' AND account_email = '${email}' ORDER BY id DESC LIMIT ${limit}`
-      : `SELECT * FROM usage_snapshots WHERE tool = '${tool}' ORDER BY id DESC LIMIT ${limit}`;
-    const res = this.db.exec(query);
-    if (!res || res.length === 0) return [];
+    const safeLimit = this.normalizeLimit(limit);
+    const rows = email
+      ? this.queryAll(
+          `SELECT * FROM quota_snapshots
+           WHERE tool = ? AND account_email = ?
+           ORDER BY id DESC LIMIT ?`,
+          [tool, this.normalizeEmail(email), safeLimit]
+        )
+      : this.queryAll(
+          `SELECT * FROM quota_snapshots
+           WHERE tool = ? ORDER BY id DESC LIMIT ?`,
+          [tool, safeLimit]
+        );
+    return rows.reverse().map((row) => this.toLegacyShape(row));
+  }
 
-    const columns = res[0].columns;
-    const list = res[0].values.map((row) => {
-      const obj = {};
-      columns.forEach((col, idx) => {
-        obj[col] = row[idx];
-      });
-      return obj;
-    });
-    return list.reverse();
+  normalizeLimit(limit) {
+    const value = Number.parseInt(limit, 10);
+    if (!Number.isFinite(value)) return 20;
+    return Math.max(1, Math.min(500, value));
   }
 }
 
