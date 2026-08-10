@@ -29,10 +29,8 @@ export default function App() {
   });
   const [historyData, setHistoryData] = useState([]);
 
-  // Fetch registered accounts and snapshot data
   const fetchUsageData = useCallback(async () => {
     if (window.electronAPI) {
-      // 1. Fetch all accounts by tool
       const [agAccounts, codexAccounts, claudeAccounts] = await Promise.all([
         window.electronAPI.getAccountsByTool('antigravity'),
         window.electronAPI.getAccountsByTool('codex'),
@@ -45,7 +43,6 @@ export default function App() {
         claudecode: claudeAccounts || [],
       });
 
-      // Determine selected email for current tool
       const currentToolKey = activeTab === 'overview' ? 'antigravity' : activeTab;
       const toolAccounts =
         currentToolKey === 'antigravity'
@@ -54,10 +51,9 @@ export default function App() {
           ? codexAccounts
           : claudeAccounts;
 
-      const activeAcc = toolAccounts.find((a) => a.active === 1) || toolAccounts[0];
+      const activeAcc = toolAccounts.find((account) => account.active === 1) || toolAccounts[0];
       const selectedEmail = selectedAccounts[currentToolKey] || activeAcc?.email || null;
 
-      // 2. Fetch snapshots for active/selected accounts
       const [agSnapshot, codexSnapshot, claudeSnapshot] = await Promise.all([
         window.electronAPI.getSnapshotByAccount(
           'antigravity',
@@ -79,7 +75,6 @@ export default function App() {
         claude: claudeSnapshot,
       });
 
-      // 3. Fetch history for selected tool & account
       if (activeTab !== 'overview') {
         const history = await window.electronAPI.getUsageHistoryByAccount(
           currentToolKey,
@@ -89,7 +84,6 @@ export default function App() {
         setHistoryData(history || []);
       }
     } else {
-      // Mock Fallback for Browser Dev Preview
       const now = new Date();
       const mockAccounts = [
         { email: 'merteren1997@gmail.com', active: 1 },
@@ -99,18 +93,19 @@ export default function App() {
       setAccountsByTool({
         antigravity: mockAccounts,
         codex: [{ email: 'merteren1997@hotmail.com', active: 1 }],
-        claudecode: [{ email: 'mert@anthropic.com', active: 1 }],
+        claudecode: [{ email: 'claude@example.com', active: 1 }],
       });
 
       const mockAg = {
         tool: 'antigravity',
         account_email: selectedAccounts.antigravity || 'merteren1997@gmail.com',
         usage_percent: 42.5,
-        limit_count: 400,
-        used_count: 170,
+        limit_count: 100,
+        used_count: 42.5,
         rolling_5h_percent: 42.5,
         next_5h_reset_at: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
-        weekly_usage_count: 1420,
+        weekly_usage_count: 71,
+        weekly_usage_percent: 71,
         weekly_reset_at: new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000).toISOString(),
         timestamp: now.toISOString(),
       };
@@ -132,8 +127,8 @@ export default function App() {
 
   const handleSelectAccount = (email) => {
     if (activeTab !== 'overview') {
-      setSelectedAccounts((prev) => ({
-        ...prev,
+      setSelectedAccounts((previous) => ({
+        ...previous,
         [activeTab]: email,
       }));
     }
@@ -141,18 +136,26 @@ export default function App() {
 
   const handleManualScan = async () => {
     setIsScanning(true);
-    if (window.electronAPI) {
-      await window.electronAPI.scanUsage();
+    try {
+      if (window.electronAPI) {
+        await window.electronAPI.scanUsage();
+      }
+      await fetchUsageData();
+    } finally {
+      setTimeout(() => setIsScanning(false), 500);
     }
-    await fetchUsageData();
-    setTimeout(() => setIsScanning(false), 500);
   };
 
   useEffect(() => {
     fetchUsageData();
+    const unsubscribe = window.electronAPI?.onUsageUpdated?.(() => {
+      fetchUsageData();
+    });
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
   }, [fetchUsageData]);
 
-  // Current active tool snapshot data
   const currentData =
     activeTab === 'antigravity'
       ? usageData.antigravity
@@ -177,19 +180,14 @@ export default function App() {
 
   return (
     <div className="w-full h-screen bg-slate-950/85 text-slate-100 flex flex-col border border-white/10 rounded-xl overflow-hidden glass-panel shadow-2xl">
-      {/* Header */}
       <Header onRefresh={handleManualScan} isScanning={isScanning} />
-
-      {/* Navigation Tabs */}
       <NavigationTabs activeTab={activeTab} setActiveTab={setActiveTab} />
 
-      {/* Main Content Area */}
       <main className="flex-1 overflow-y-auto px-3 pb-3 space-y-3 custom-scrollbar">
         {activeTab === 'overview' ? (
           <OverviewView usageData={usageData} />
         ) : (
           <>
-            {/* Account Switcher Pills */}
             <AccountSelector
               accounts={currentAccounts}
               selectedAccountEmail={selectedEmail}
@@ -197,34 +195,29 @@ export default function App() {
               toolTitle={currentToolTitle}
             />
 
-            {/* Account Card (Single Active Account for Antigravity, etc.) */}
             <AccountCard
               email={currentData?.account_email || selectedEmail || 'Bilinmiyor'}
               toolName={currentToolTitle}
               lastLogin={currentData?.timestamp}
             />
 
-            {/* Radial Gauge */}
             <RadialProgress
-              percentage={currentData?.rolling_5h_percent || currentData?.usage_percent || 0}
-              used={currentData?.used_count || 0}
-              limit={currentData?.limit_count || 0}
+              percentage={currentData?.rolling_5h_percent ?? currentData?.usage_percent ?? null}
               label={`${currentToolTitle} 5-Saatlik Limit`}
             />
 
-            {/* Countdown Timer */}
             <CountdownTimer
               resetTimeISO={currentData?.next_5h_reset_at}
               title="5-Saatlik Kota Sıfırlaması"
             />
 
-            {/* Weekly Reset Timeline */}
             <WeeklyTimeline
-              weeklyCount={currentData?.weekly_usage_count || 0}
+              weeklyUsagePercent={
+                currentData?.weekly_usage_percent ?? currentData?.weekly_usage_count ?? null
+              }
               weeklyResetISO={currentData?.weekly_reset_at}
             />
 
-            {/* History Chart */}
             <HistoryChart historyData={historyData} />
           </>
         )}
