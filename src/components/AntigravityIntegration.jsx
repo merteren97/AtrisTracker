@@ -11,9 +11,9 @@ export default function AntigravityIntegration({ status, busy, onEnable, onDisab
     ? settingsError
     : enabled
     ? hasTelemetry
-      ? '5h / haftalık değerler resmi statusline telemetry üzerinden okunur.'
-      : 'Bağlantı hazır; Antigravity CLI açıldığında ilk telemetry kaydedilir.'
-    : 'Prompt çalıştırmadan resmi statusline verisini yerelde yakalar.';
+      ? 'Canlı kota yerel servisten okunur; statusline telemetry yedek olarak saklanır.'
+      : 'Canlı kota yerel servisten okunur; statusline yedeği ilk CLI olayını bekliyor.'
+    : 'Yerel kota otomatik okunur; bunu açmak çevrimdışı telemetry yedeğini de etkinleştirir.';
 
   return (
     <div className="p-2.5 bg-slate-900/60 rounded-xl border border-white/5 backdrop-blur-sm flex items-center justify-between gap-2">
@@ -30,8 +30,8 @@ export default function AntigravityIntegration({ status, busy, onEnable, onDisab
             {settingsError
               ? 'Antigravity ayarı okunamadı'
               : enabled
-              ? 'Canlı kota bağlantısı aktif'
-              : 'Canlı Antigravity kotasını bağla'}
+              ? 'Canlı kota + telemetry yedeği aktif'
+              : 'Antigravity telemetry yedeğini aç'}
           </div>
           <div className={`text-[9px] truncate ${settingsError ? 'text-rose-400/80' : 'text-slate-400'}`}>
             {detail}
