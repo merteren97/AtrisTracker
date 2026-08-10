@@ -1,12 +1,23 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require('electron');
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  Tray,
+  Menu,
+  nativeImage,
+  shell,
+  Notification,
+} = require('electron');
 const path = require('path');
 const fs = require('fs');
 const UsageDatabase = require('./db');
 const CLIScanner = require('./cliScannerEnhanced');
 const AntigravityIntegration = require('./antigravityIntegration');
 const StartupManager = require('./startup');
+const UpdateManager = require('./updateManager');
 
 const APP_ID = 'com.atristracker.app';
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 let mainWindow = null;
 let tray = null;
@@ -14,7 +25,9 @@ let db = null;
 let scanner = null;
 let antigravityIntegration = null;
 let startupManager = null;
+let updateManager = null;
 let pollingInterval = null;
+let updatePollingInterval = null;
 let alwaysOnTopState = true;
 let startHidden = process.argv.includes('--startup');
 
@@ -118,6 +131,16 @@ function createTray() {
       },
     },
     {
+      label: 'Güncellemeleri Kontrol Et',
+      click: async () => {
+        if (!updateManager) return;
+        const status = await updateManager.check({ notify: true });
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('update-status', status);
+        }
+      },
+    },
+    {
       label: 'Göster / Gizle',
       click: () => {
         if (!mainWindow) return;
@@ -153,6 +176,15 @@ function createTray() {
   });
 }
 
+async function checkForUpdates(notify = true) {
+  if (!updateManager) return null;
+  const status = await updateManager.check({ notify });
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-status', status);
+  }
+  return status;
+}
+
 app.whenReady().then(async () => {
   const dbPath = path.join(app.getPath('userData'), 'ai_usage_tracker.db');
   db = new UsageDatabase(dbPath);
@@ -160,6 +192,7 @@ app.whenReady().then(async () => {
   scanner = new CLIScanner(db);
   antigravityIntegration = new AntigravityIntegration();
   startupManager = new StartupManager(app);
+  updateManager = new UpdateManager(app, shell, Notification);
 
   // v1.0.1 wrote a Windows statusLine command using `-File "..."`. Antigravity
   // preserves those quotes as part of the -File argument, so repair that legacy
@@ -174,6 +207,13 @@ app.whenReady().then(async () => {
   await scanner.scanAll();
   createWindow();
   createTray();
+
+  // Update checks are notification-only. AtrisTracker never downloads or
+  // installs a release without an explicit user action.
+  checkForUpdates(true).catch((error) => console.warn('Update check failed:', error.message));
+  updatePollingInterval = setInterval(() => {
+    checkForUpdates(true).catch((error) => console.warn('Update check failed:', error.message));
+  }, UPDATE_CHECK_INTERVAL_MS);
 
   pollingInterval = setInterval(async () => {
     await scanner.scanAll();
@@ -241,6 +281,17 @@ ipcMain.handle('set-startup-enabled', (event, enabled) => {
     : { supported: false, enabled: false };
 });
 
+ipcMain.handle('get-update-status', () => {
+  return updateManager ? updateManager.getStatus() : null;
+});
+
+ipcMain.handle('check-for-updates', () => checkForUpdates(false));
+
+ipcMain.handle('open-update', async () => {
+  if (!updateManager) return null;
+  return updateManager.openUpdate();
+});
+
 ipcMain.handle('toggle-always-on-top', () => {
   if (mainWindow) {
     alwaysOnTopState = !alwaysOnTopState;
@@ -263,6 +314,7 @@ ipcMain.on('window-close', () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     if (pollingInterval) clearInterval(pollingInterval);
+    if (updatePollingInterval) clearInterval(updatePollingInterval);
     app.quit();
   }
 });
