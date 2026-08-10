@@ -4,16 +4,25 @@ const fs = require('fs');
 const UsageDatabase = require('./db');
 const CLIScanner = require('./cliScanner');
 const AntigravityIntegration = require('./antigravityIntegration');
+const StartupManager = require('./startup');
+
+const APP_ID = 'com.atristracker.app';
 
 let mainWindow = null;
 let tray = null;
 let db = null;
 let scanner = null;
 let antigravityIntegration = null;
+let startupManager = null;
 let pollingInterval = null;
 let alwaysOnTopState = true;
+let startHidden = process.argv.includes('--startup');
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+if (process.platform === 'win32') {
+  app.setAppUserModelId(APP_ID);
+}
 
 // Disable Chromium GPU shader cache locks on Windows
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
@@ -21,6 +30,9 @@ app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
 
 function createWindow() {
   const iconPath = path.join(__dirname, '../assets/logo.jpg');
+  const shouldShow = !startHidden;
+  startHidden = false;
+
   mainWindow = new BrowserWindow({
     width: 400,
     height: 620,
@@ -34,6 +46,7 @@ function createWindow() {
     skipTaskbar: false,
     resizable: true,
     hasShadow: true,
+    show: shouldShow,
     icon: fs.existsSync(iconPath) ? iconPath : undefined,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -66,8 +79,9 @@ function createTray() {
       );
 
   tray = new Tray(icon);
+  const startupStatus = startupManager?.getStatus() || { supported: false, enabled: false };
   const contextMenu = Menu.buildFromTemplate([
-    { label: 'AtrisTracker', enabled: false },
+    { label: `AtrisTracker v${app.getVersion()}`, enabled: false },
     { type: 'separator' },
     {
       label: 'Yenile / Tara',
@@ -79,12 +93,28 @@ function createTray() {
       },
     },
     {
-      label: alwaysOnTopState ? 'Her Zaman Üstte (Aktif)' : 'Her Zaman Üstte (Kapalı)',
+      label: 'Her Zaman Üstte',
       type: 'checkbox',
       checked: alwaysOnTopState,
-      click: () => {
-        alwaysOnTopState = !alwaysOnTopState;
+      click: (menuItem) => {
+        alwaysOnTopState = menuItem.checked;
         if (mainWindow) mainWindow.setAlwaysOnTop(alwaysOnTopState);
+      },
+    },
+    {
+      label: 'Bilgisayar açıldığında başlat',
+      type: 'checkbox',
+      checked: startupStatus.enabled,
+      enabled: startupStatus.supported,
+      click: (menuItem) => {
+        if (!startupManager) return;
+        try {
+          const status = startupManager.setEnabled(menuItem.checked);
+          menuItem.checked = status.enabled;
+        } catch (error) {
+          console.error('Windows startup setting failed:', error);
+          menuItem.checked = !menuItem.checked;
+        }
       },
     },
     {
@@ -109,7 +139,7 @@ function createTray() {
     },
   ]);
 
-  tray.setToolTip('AI Usage Tracker (Antigravity CLI, Codex CLI, Claude Code)');
+  tray.setToolTip(`AtrisTracker v${app.getVersion()} — AI CLI Usage Tracker`);
   tray.setContextMenu(contextMenu);
 
   tray.on('click', () => {
@@ -129,6 +159,7 @@ app.whenReady().then(async () => {
   await db.init();
   scanner = new CLIScanner(db);
   antigravityIntegration = new AntigravityIntegration();
+  startupManager = new StartupManager(app);
 
   await scanner.scanAll();
   createWindow();
@@ -188,6 +219,16 @@ ipcMain.handle('enable-antigravity-integration', async () => {
 
 ipcMain.handle('disable-antigravity-integration', () => {
   return antigravityIntegration ? antigravityIntegration.disable() : null;
+});
+
+ipcMain.handle('get-startup-status', () => {
+  return startupManager ? startupManager.getStatus() : { supported: false, enabled: false };
+});
+
+ipcMain.handle('set-startup-enabled', (event, enabled) => {
+  return startupManager
+    ? startupManager.setEnabled(Boolean(enabled))
+    : { supported: false, enabled: false };
 });
 
 ipcMain.handle('toggle-always-on-top', () => {
