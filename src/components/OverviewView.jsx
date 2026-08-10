@@ -41,7 +41,11 @@ export default function OverviewView({ usageData }) {
           const Icon = tool.icon;
           const data = tool.data || null;
           const rawPercent = data?.rolling_5h_percent ?? data?.usage_percent;
-          const hasData = Number.isFinite(Number(rawPercent));
+          const hasData =
+            rawPercent !== null &&
+            rawPercent !== undefined &&
+            rawPercent !== '' &&
+            Number.isFinite(Number(rawPercent));
           const percent = hasData ? Math.round(Number(rawPercent)) : 0;
 
           return (
