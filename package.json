@@ -65,7 +65,8 @@
       ],
       "icon": "build/icons",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
-      "category": "Development"
+      "category": "Development",
+      "maintainer": "merteren97 <37554755+merteren97@users.noreply.github.com>"
     },
     "nsis": {
       "artifactName": "${productName}-Setup-${version}.${ext}",
