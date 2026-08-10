@@ -1,4 +1,5 @@
 const { spawn } = require('child_process');
+const packageInfo = require('../package.json');
 
 const FIVE_HOURS_MINUTES = 5 * 60;
 const ONE_WEEK_MINUTES = 7 * 24 * 60;
@@ -47,9 +48,10 @@ class CodexAppServerQuota {
       let stderrTail = '';
       let accountResult;
       let rateLimitResult;
+      let timeout = null;
 
       const cleanup = () => {
-        clearTimeout(timeout);
+        if (timeout) clearTimeout(timeout);
         child.stdout?.removeAllListeners();
         child.stderr?.removeAllListeners();
         child.removeAllListeners();
@@ -151,13 +153,13 @@ class CodexAppServerQuota {
             clientInfo: {
               name: 'atris_tracker',
               title: 'AtrisTracker',
-              version: '1.0.2',
+              version: packageInfo.version,
             },
           },
         });
       });
 
-      const timeout = setTimeout(() => {
+      timeout = setTimeout(() => {
         const suffix = stderrTail.trim() ? `: ${stderrTail.trim()}` : '';
         fail(new Error(`Codex app-server zaman aşımına uğradı${suffix}`));
       }, this.timeoutMs);
