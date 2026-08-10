@@ -1,12 +1,23 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require('electron');
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  Tray,
+  Menu,
+  nativeImage,
+  shell,
+  Notification,
+} = require('electron');
 const path = require('path');
 const fs = require('fs');
 const UsageDatabase = require('./db');
 const CLIScanner = require('./cliScannerEnhanced');
 const AntigravityIntegration = require('./antigravityIntegration');
 const StartupManager = require('./startup');
+const UpdateManager = require('./updateManager');
 
 const APP_ID = 'com.atristracker.app';
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 let mainWindow = null;
 let tray = null;
@@ -14,7 +25,10 @@ let db = null;
 let scanner = null;
 let antigravityIntegration = null;
 let startupManager = null;
+let updateManager = null;
+let lastScanResult = null;
 let pollingInterval = null;
+let updatePollingInterval = null;
 let alwaysOnTopState = true;
 let startHidden = process.argv.includes('--startup');
 
@@ -67,6 +81,12 @@ function createWindow() {
   });
 }
 
+async function runUsageScan() {
+  if (!scanner) return null;
+  lastScanResult = await scanner.scanAll();
+  return lastScanResult;
+}
+
 function createTray() {
   const iconPath = path.join(__dirname, '../assets/logo.jpg');
   const icon = fs.existsSync(iconPath)
@@ -87,7 +107,7 @@ function createTray() {
       label: 'Yenile / Tara',
       click: async () => {
         if (scanner) {
-          await scanner.scanAll();
+          await runUsageScan();
           if (mainWindow) mainWindow.webContents.send('usage-updated');
         }
       },
@@ -114,6 +134,16 @@ function createTray() {
         } catch (error) {
           console.error('Windows startup setting failed:', error);
           menuItem.checked = !menuItem.checked;
+        }
+      },
+    },
+    {
+      label: 'Güncellemeleri Kontrol Et',
+      click: async () => {
+        if (!updateManager) return;
+        const status = await updateManager.check({ notify: true });
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('update-status', status);
         }
       },
     },
@@ -153,6 +183,15 @@ function createTray() {
   });
 }
 
+async function checkForUpdates(notify = true) {
+  if (!updateManager) return null;
+  const status = await updateManager.check({ notify });
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-status', status);
+  }
+  return status;
+}
+
 app.whenReady().then(async () => {
   const dbPath = path.join(app.getPath('userData'), 'ai_usage_tracker.db');
   db = new UsageDatabase(dbPath);
@@ -160,6 +199,7 @@ app.whenReady().then(async () => {
   scanner = new CLIScanner(db);
   antigravityIntegration = new AntigravityIntegration();
   startupManager = new StartupManager(app);
+  updateManager = new UpdateManager(app, shell, Notification);
 
   // v1.0.1 wrote a Windows statusLine command using `-File "..."`. Antigravity
   // preserves those quotes as part of the -File argument, so repair that legacy
@@ -171,12 +211,19 @@ app.whenReady().then(async () => {
     console.warn('Antigravity telemetry bridge repair skipped:', error.message);
   }
 
-  await scanner.scanAll();
+  await runUsageScan();
   createWindow();
   createTray();
 
+  // Update checks are notification-only. AtrisTracker never downloads or
+  // installs a release without an explicit user action.
+  checkForUpdates(true).catch((error) => console.warn('Update check failed:', error.message));
+  updatePollingInterval = setInterval(() => {
+    checkForUpdates(true).catch((error) => console.warn('Update check failed:', error.message));
+  }, UPDATE_CHECK_INTERVAL_MS);
+
   pollingInterval = setInterval(async () => {
-    await scanner.scanAll();
+    await runUsageScan();
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('usage-updated');
     }
@@ -191,10 +238,9 @@ ipcMain.handle('get-latest-usage', (event, tool) => {
   return db ? db.getLatestSnapshot(tool) : null;
 });
 
-ipcMain.handle('scan-usage', async () => {
-  if (!scanner) return null;
-  return scanner.scanAll();
-});
+ipcMain.handle('scan-usage', () => runUsageScan());
+
+ipcMain.handle('get-scan-status', () => lastScanResult);
 
 ipcMain.handle('get-usage-history', (event, tool, limit) => {
   return db ? db.getUsageHistory(tool, limit) : [];
@@ -223,7 +269,7 @@ ipcMain.handle('get-antigravity-integration-status', () => {
 ipcMain.handle('enable-antigravity-integration', async () => {
   if (!antigravityIntegration) return null;
   const status = antigravityIntegration.enable();
-  if (scanner) await scanner.scanAll();
+  if (scanner) await runUsageScan();
   return status;
 });
 
@@ -239,6 +285,17 @@ ipcMain.handle('set-startup-enabled', (event, enabled) => {
   return startupManager
     ? startupManager.setEnabled(Boolean(enabled))
     : { supported: false, enabled: false };
+});
+
+ipcMain.handle('get-update-status', () => {
+  return updateManager ? updateManager.getStatus() : null;
+});
+
+ipcMain.handle('check-for-updates', () => checkForUpdates(false));
+
+ipcMain.handle('open-update', async () => {
+  if (!updateManager) return null;
+  return updateManager.openUpdate();
 });
 
 ipcMain.handle('toggle-always-on-top', () => {
@@ -263,6 +320,7 @@ ipcMain.on('window-close', () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     if (pollingInterval) clearInterval(pollingInterval);
+    if (updatePollingInterval) clearInterval(updatePollingInterval);
     app.quit();
   }
 });
