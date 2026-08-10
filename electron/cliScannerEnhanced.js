@@ -117,6 +117,9 @@ class EnhancedCLIScanner extends CLIScanner {
     if (appServerError && !this.hasObservedQuota(fallback)) {
       fallback.error = `${fallback.error || 'Codex kota verisi alınamadı'}; app-server: ${appServerError.message}`;
     }
+    if (!this.hasObservedQuota(fallback) && !fallback.error) {
+      fallback.error = 'Codex hesabı bulundu ancak app-server veya session kayıtlarında rate limit verisi yok';
+    }
     return fallback;
   }
 
@@ -126,8 +129,44 @@ class EnhancedCLIScanner extends CLIScanner {
 
   readClaudeOAuthToken() {
     // Never persist or log the token. The resolver only returns it in-memory to
-    // the existing Anthropic usage request made by the base scanner.
+    // the Anthropic usage request below.
     return this.claudeCredentials.readOAuthToken() || super.readClaudeOAuthToken();
+  }
+
+  async scanClaudeCode() {
+    const email = this.detectClaudeEmail();
+    const token = this.readClaudeOAuthToken();
+    if (!token) {
+      const result = this.createSnapshot('claudecode', email, null, null, 'claude-oauth-usage');
+      result.error = 'Claude OAuth kimliği bulunamadı (env/config/macOS Keychain kontrol edildi)';
+      return result;
+    }
+
+    try {
+      const payload = await this.fetchJson('https://api.anthropic.com/api/oauth/usage', {
+        Authorization: `Bearer ${token}`,
+        'anthropic-beta': 'oauth-2025-04-20',
+        'anthropic-version': '2023-06-01',
+        Accept: 'application/json',
+        'User-Agent': 'AtrisTracker/1.0',
+      });
+      const { fiveHour, weekly } = this.parseClaudeUsage(payload);
+      const result = this.createSnapshot(
+        'claudecode',
+        email,
+        fiveHour,
+        weekly,
+        'claude-oauth:/api/oauth/usage'
+      );
+      if (!this.hasObservedQuota(result)) {
+        result.error = 'Claude usage endpoint yanıtında 5h/weekly quota alanı bulunamadı';
+      }
+      return result;
+    } catch (error) {
+      const result = this.createSnapshot('claudecode', email, null, null, 'claude-oauth-usage');
+      result.error = error.message;
+      return result;
+    }
   }
 }
 
