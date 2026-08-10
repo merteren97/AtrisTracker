@@ -1,3 +1,4 @@
+const http = require('http');
 const https = require('https');
 const { execFileSync } = require('child_process');
 
@@ -7,6 +8,7 @@ class AntigravityLocalQuotaProbe {
   constructor(options = {}) {
     this.platform = options.platform || process.platform;
     this.execFileSync = options.execFileSync || execFileSync;
+    this.http = options.http || http;
     this.https = options.https || https;
     this.timeoutMs = options.timeoutMs || 2500;
   }
@@ -39,8 +41,12 @@ class AntigravityLocalQuotaProbe {
         const command = [
           "$ErrorActionPreference = 'SilentlyContinue'",
           'Get-CimInstance Win32_Process |',
-          "Where-Object { $_.Name -ieq 'agy.exe' -or $_.Name -ieq 'antigravity-cli.exe' -or $_.Name -ieq 'antigravity_cli.exe' } |",
-          'Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress',
+          'Where-Object {',
+          "  $name = [string]$_.Name; $cmd = ([string]$_.CommandLine).ToLowerInvariant();",
+          "  $name -ieq 'agy.exe' -or $name -ieq 'antigravity-cli.exe' -or $name -ieq 'antigravity_cli.exe' -or",
+          "  $cmd -match '[\\\\/](antigravity-cli|antigravity_cli)[\\\\/]' -or",
+          "  $cmd -match '[\\\\/]agy(?:\\.exe)?(?:\\s|$)'",
+          '} | Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress',
         ].join(' ');
         const output = this.execFileSync(
           'powershell.exe',
@@ -200,45 +206,57 @@ class AntigravityLocalQuotaProbe {
     };
   }
 
-  postJson(port, method, body, timeoutMs) {
+  async postJson(port, method, body, timeoutMs) {
+    let lastError = null;
+    for (const scheme of ['https', 'http']) {
+      try {
+        return await this.postJsonWithScheme(scheme, port, method, body, timeoutMs);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error('Antigravity local quota endpoint unavailable');
+  }
+
+  postJsonWithScheme(scheme, port, method, body, timeoutMs) {
     const payload = JSON.stringify(body || {});
+    const transport = scheme === 'http' ? this.http : this.https;
     return new Promise((resolve, reject) => {
-      const request = this.https.request(
-        {
-          hostname: '127.0.0.1',
-          port,
-          path: `${SERVICE_PREFIX}${method}`,
-          method: 'POST',
-          rejectUnauthorized: false,
-          agent: false,
-          headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(payload),
-            'Connect-Protocol-Version': '1',
-          },
+      const options = {
+        hostname: '127.0.0.1',
+        port,
+        path: `${SERVICE_PREFIX}${method}`,
+        method: 'POST',
+        agent: false,
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(payload),
+          'Connect-Protocol-Version': '1',
         },
-        (response) => {
-          let responseBody = '';
-          response.setEncoding('utf8');
-          response.on('data', (chunk) => {
-            responseBody += chunk;
-            if (responseBody.length > 4 * 1024 * 1024) {
-              request.destroy(new Error('Antigravity local quota response is too large'));
-            }
-          });
-          response.on('end', () => {
-            if (response.statusCode !== 200) {
-              reject(new Error(`Antigravity local quota HTTP ${response.statusCode}`));
-              return;
-            }
-            try {
-              resolve(JSON.parse(responseBody));
-            } catch {
-              reject(new Error('Antigravity local quota returned invalid JSON'));
-            }
-          });
-        }
-      );
+      };
+      if (scheme === 'https') options.rejectUnauthorized = false;
+
+      const request = transport.request(options, (response) => {
+        let responseBody = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk) => {
+          responseBody += chunk;
+          if (responseBody.length > 4 * 1024 * 1024) {
+            request.destroy(new Error('Antigravity local quota response is too large'));
+          }
+        });
+        response.on('end', () => {
+          if (response.statusCode !== 200) {
+            reject(new Error(`Antigravity local quota ${scheme.toUpperCase()} HTTP ${response.statusCode}`));
+            return;
+          }
+          try {
+            resolve(JSON.parse(responseBody));
+          } catch {
+            reject(new Error('Antigravity local quota returned invalid JSON'));
+          }
+        });
+      });
 
       request.setTimeout(timeoutMs, () => {
         request.destroy(new Error('Antigravity local quota request timed out'));
@@ -317,7 +335,13 @@ class AntigravityLocalQuotaProbe {
 
   normalizeReset(value) {
     if (value === null || value === undefined || value === '') return null;
-    const date = new Date(value);
+    let date;
+    if (typeof value === 'number' || /^\d+(\.\d+)?$/.test(String(value))) {
+      const number = Number(value);
+      date = new Date(number > 10_000_000_000 ? number : number * 1000);
+    } else {
+      date = new Date(value);
+    }
     return Number.isNaN(date.getTime()) ? null : date.toISOString();
   }
 
