@@ -1,12 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const { isDeepStrictEqual } = require('util');
 
 const MARKER = 'AtrisTracker statusline telemetry bridge';
 
 class AntigravityIntegration {
-  constructor() {
-    this.home = os.homedir();
+  constructor(options = {}) {
+    this.home = options.home || os.homedir();
     this.baseDir = path.join(this.home, '.gemini', 'antigravity-cli');
     this.settingsPath = path.join(this.baseDir, 'settings.json');
     this.cachePath = path.join(this.baseDir, 'atris-statusline-state.json');
@@ -24,31 +25,122 @@ class AntigravityIntegration {
   readJson(filePath, fallback = null) {
     try {
       if (!fs.existsSync(filePath)) return fallback;
-      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      return JSON.parse(fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, ''));
     } catch {
       return fallback;
     }
   }
 
-  readSettingsStrict() {
-    if (!fs.existsSync(this.settingsPath)) return {};
+  stripJsonComments(input) {
+    let output = '';
+    let inString = false;
+    let escaped = false;
+    let lineComment = false;
+    let blockComment = false;
+
+    for (let index = 0; index < input.length; index += 1) {
+      const char = input[index];
+      const next = input[index + 1];
+
+      if (lineComment) {
+        if (char === '\n' || char === '\r') {
+          lineComment = false;
+          output += char;
+        } else {
+          output += ' ';
+        }
+        continue;
+      }
+
+      if (blockComment) {
+        if (char === '*' && next === '/') {
+          output += '  ';
+          blockComment = false;
+          index += 1;
+        } else if (char === '\n' || char === '\r') {
+          output += char;
+        } else {
+          output += ' ';
+        }
+        continue;
+      }
+
+      if (inString) {
+        output += char;
+        if (escaped) {
+          escaped = false;
+        } else if (char === '\\') {
+          escaped = true;
+        } else if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inString = true;
+        output += char;
+        continue;
+      }
+
+      if (char === '/' && next === '/') {
+        lineComment = true;
+        output += '  ';
+        index += 1;
+        continue;
+      }
+
+      if (char === '/' && next === '*') {
+        blockComment = true;
+        output += '  ';
+        index += 1;
+        continue;
+      }
+
+      output += char;
+    }
+
+    return output;
+  }
+
+  parseSettingsContent(raw) {
+    const withoutBom = String(raw || '').replace(/^\uFEFF/, '');
+    return JSON.parse(this.stripJsonComments(withoutBom));
+  }
+
+  readSettingsDocument() {
+    if (!fs.existsSync(this.settingsPath)) {
+      return { exists: false, raw: null, settings: {} };
+    }
+
+    const raw = fs.readFileSync(this.settingsPath, 'utf8');
     let settings;
     try {
-      settings = JSON.parse(fs.readFileSync(this.settingsPath, 'utf8'));
+      settings = this.parseSettingsContent(raw);
     } catch (error) {
       throw new Error(`Antigravity settings.json okunamadı: ${error.message}`);
     }
+
     if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
       throw new Error('Antigravity settings.json geçerli bir JSON nesnesi değil.');
     }
-    return settings;
+
+    return { exists: true, raw, settings };
+  }
+
+  readSettingsStrict() {
+    return this.readSettingsDocument().settings;
+  }
+
+  writeTextAtomic(filePath, content) {
+    this.ensureBaseDir();
+    const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(tempPath, content, 'utf8');
+    fs.renameSync(tempPath, filePath);
   }
 
   writeJsonAtomic(filePath, value) {
-    this.ensureBaseDir();
-    const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-    fs.writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-    fs.renameSync(tempPath, filePath);
+    this.writeTextAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
   }
 
   getBridgeCommand() {
@@ -85,13 +177,15 @@ class AntigravityIntegration {
       enabled: this.isOurCommand(command),
       settings_found: fs.existsSync(this.settingsPath),
       settings_error: settingsError,
+      settings_path: this.settingsPath,
       last_telemetry_at: lastTelemetryAt,
     };
   }
 
   enable() {
     this.ensureBaseDir();
-    const settings = this.readSettingsStrict();
+    const document = this.readSettingsDocument();
+    const settings = document.settings;
     const currentStatusLine = settings.statusLine || null;
     const currentCommand = currentStatusLine?.command || '';
     if (this.isOurCommand(currentCommand)) return this.getStatus();
@@ -99,6 +193,9 @@ class AntigravityIntegration {
     this.writeJsonAtomic(this.backupPath, {
       marker: MARKER,
       saved_at: new Date().toISOString(),
+      had_settings_file: document.exists,
+      raw_settings: document.raw,
+      original_settings: settings,
       had_status_line: Object.prototype.hasOwnProperty.call(settings, 'statusLine'),
       status_line: currentStatusLine,
     });
@@ -113,16 +210,32 @@ class AntigravityIntegration {
   }
 
   disable() {
-    const settings = this.readSettingsStrict();
+    const document = this.readSettingsDocument();
+    const settings = document.settings;
     const backup = this.readJson(this.backupPath, null);
 
     if (this.isOurCommand(settings?.statusLine?.command || '')) {
-      if (backup?.marker === MARKER && backup.had_status_line) {
-        settings.statusLine = backup.status_line;
+      const originalSettings = backup?.original_settings;
+      const canRestoreRaw =
+        backup?.marker === MARKER &&
+        typeof backup.raw_settings === 'string' &&
+        originalSettings &&
+        typeof originalSettings === 'object';
+
+      if (canRestoreRaw) {
+        const currentWithoutBridge = { ...settings };
+        const originalWithoutStatusLine = { ...originalSettings };
+        delete currentWithoutBridge.statusLine;
+        delete originalWithoutStatusLine.statusLine;
+
+        if (isDeepStrictEqual(currentWithoutBridge, originalWithoutStatusLine)) {
+          this.writeTextAtomic(this.settingsPath, backup.raw_settings);
+        } else {
+          this.restoreStatusLineSemantically(settings, backup);
+        }
       } else {
-        delete settings.statusLine;
+        this.restoreStatusLineSemantically(settings, backup);
       }
-      this.writeJsonAtomic(this.settingsPath, settings);
     }
 
     try {
@@ -131,6 +244,26 @@ class AntigravityIntegration {
       // The settings restoration is the important part; stale backup cleanup is non-fatal.
     }
     return this.getStatus();
+  }
+
+  restoreStatusLineSemantically(settings, backup) {
+    if (backup?.marker === MARKER && backup.had_status_line) {
+      settings.statusLine = backup.status_line;
+    } else {
+      delete settings.statusLine;
+    }
+
+    const hasOtherSettings = Object.keys(settings).length > 0;
+    if (backup?.marker === MARKER && backup.had_settings_file === false && !hasOtherSettings) {
+      try {
+        if (fs.existsSync(this.settingsPath)) fs.unlinkSync(this.settingsPath);
+      } catch {
+        this.writeJsonAtomic(this.settingsPath, settings);
+      }
+      return;
+    }
+
+    this.writeJsonAtomic(this.settingsPath, settings);
   }
 
   writeBridgeScript(previousCommand) {

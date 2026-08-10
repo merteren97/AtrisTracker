@@ -24,10 +24,7 @@ jobs:
           node-version: 22
           cache: npm
 
-      # The repository lockfile is currently out of sync with package.json
-      # (for example electron-builder is missing from package-lock.json).
-      # Use npm install here so the backend/build checks can still run; the
-      # lockfile mismatch is tracked separately from this quota backend fix.
+      # The repository lockfile is currently out of sync with package.json.
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
@@ -36,3 +33,49 @@ jobs:
 
       - name: Build renderer
         run: npm run build
+
+  windows-package:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Mirror the release workflow: change package version before dependency
+      # installation, then verify electron-builder uses that exact version.
+      - name: Simulate release version
+        run: npm version 9.9.9 --no-git-tag-version --allow-same-version
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Backend smoke test on Windows
+        run: npm run test:backend
+
+      - name: Build renderer
+        run: npm run build
+
+      - name: Build Windows installer and portable binary
+        run: npx electron-builder --win --publish never --config.directories.output=release-smoke
+
+      - name: Verify Windows artifact names
+        shell: pwsh
+        run: |
+          $installer = 'release-smoke/AtrisTracker-Setup-9.9.9.exe'
+          $portable = 'release-smoke/AtrisTracker-Portable-9.9.9.exe'
+
+          if (-not (Test-Path $installer)) {
+            throw "Missing installer artifact: $installer"
+          }
+          if (-not (Test-Path $portable)) {
+            throw "Missing portable artifact: $portable"
+          }
+
+          Write-Host "Verified $installer"
+          Write-Host "Verified $portable"
