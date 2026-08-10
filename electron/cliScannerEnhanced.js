@@ -1,11 +1,15 @@
+const path = require('path');
 const CLIScanner = require('./cliScanner');
 const AntigravityLocalQuotaProbe = require('./antigravityLocalQuota');
+const CodexAppServerQuota = require('./codexAppServer');
 
 class EnhancedCLIScanner extends CLIScanner {
   constructor(db, options = {}) {
     super(db);
     this.antigravityLocalQuota =
       options.antigravityLocalQuota || new AntigravityLocalQuotaProbe(options.antigravityProbeOptions);
+    this.codexAppServer =
+      options.codexAppServer || new CodexAppServerQuota(options.codexAppServerOptions);
   }
 
   snapshotWindow(snapshot, kind) {
@@ -72,6 +76,43 @@ class EnhancedCLIScanner extends CLIScanner {
     const fallback = await super.scanAntigravity();
     if (localError && !this.hasObservedQuota(fallback)) {
       fallback.error = `${fallback.error || 'Antigravity quota verisi alınamadı'}; yerel quota servisi: ${localError.message}`;
+    }
+    return fallback;
+  }
+
+  async scanCodex() {
+    let appServer = null;
+    let appServerError = null;
+    try {
+      appServer = await this.codexAppServer.fetch();
+    } catch (error) {
+      appServerError = error;
+    }
+
+    const authData = this.readJson(path.join(this.userHome, '.codex', 'auth.json'));
+    const detectedEmail = this.detectCodexAccount(authData);
+
+    if (appServer?.fiveHour || appServer?.weekly) {
+      const accountEmail = appServer.accountEmail || detectedEmail;
+      const result = this.createSnapshot(
+        'codex',
+        accountEmail,
+        appServer.fiveHour,
+        appServer.weekly,
+        appServer.source || 'codex-app-server:account/rateLimits/read'
+      );
+      result.scan_status = this.hasObservedQuota(result) ? 'live' : 'unavailable';
+      return result;
+    }
+
+    // Older Codex builds do not expose app-server rate limits. Keep the JSONL
+    // session parser as a compatibility fallback instead of making it primary.
+    const fallback = await super.scanCodex();
+    if (appServer?.accountEmail && !fallback.account_email) {
+      fallback.account_email = appServer.accountEmail;
+    }
+    if (appServerError && !this.hasObservedQuota(fallback)) {
+      fallback.error = `${fallback.error || 'Codex kota verisi alınamadı'}; app-server: ${appServerError.message}`;
     }
     return fallback;
   }
