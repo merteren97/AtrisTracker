@@ -5,6 +5,7 @@ const path = require('path');
 const CLIScanner = require('../electron/cliScanner');
 const UsageDatabase = require('../electron/db');
 const AntigravityIntegration = require('../electron/antigravityIntegration');
+const StartupManager = require('../electron/startup');
 
 async function run() {
   const scanner = new CLIScanner({});
@@ -55,12 +56,11 @@ async function run() {
       process.platform === 'win32' ? 'atris-statusline-bridge.ps1' : 'atris-statusline-bridge.sh'
     );
 
-    const previousStatusLine = { type: 'command', command: 'existing-statusline-command' };
-    fs.writeFileSync(
-      integration.settingsPath,
-      JSON.stringify({ theme: 'dark', statusLine: previousStatusLine }),
-      'utf8'
-    );
+    const commentedSettings = `\uFEFF// Antigravity accepts comments in settings.json\n{\n  "theme": "dark", // keep this preference\n  /* existing custom status line */\n  "statusLine": {\n    "type": "command",\n    "command": "existing-statusline-command"\n  }\n}\n`;
+    fs.writeFileSync(integration.settingsPath, commentedSettings, 'utf8');
+
+    const initialStatus = integration.getStatus();
+    assert.equal(initialStatus.settings_error, null);
 
     const enabled = integration.enable();
     assert.equal(enabled.enabled, true);
@@ -69,12 +69,43 @@ async function run() {
     assert.ok(enabledSettings.statusLine.command.includes('atris-statusline-bridge'));
 
     integration.disable();
-    const restoredSettings = JSON.parse(fs.readFileSync(integration.settingsPath, 'utf8'));
-    assert.deepEqual(restoredSettings.statusLine, previousStatusLine);
-    assert.equal(restoredSettings.theme, 'dark');
+    const restoredRaw = fs.readFileSync(integration.settingsPath, 'utf8');
+    assert.equal(restoredRaw, commentedSettings);
   } finally {
     fs.rmSync(integrationDir, { recursive: true, force: true });
   }
+
+  // Portable builds must register the stable wrapper EXE, not Electron's
+  // temporary extracted process path, when enabling Windows startup.
+  let startupEnabled = false;
+  let lastStartupSettings = null;
+  const portablePath = 'C:\\Tools\\AtrisTracker-Portable-1.0.2.exe';
+  const mockApp = {
+    isPackaged: true,
+    getLoginItemSettings: ({ path: launchPath, args }) => ({
+      openAtLogin:
+        startupEnabled &&
+        launchPath === portablePath &&
+        Array.isArray(args) &&
+        args.includes('--startup'),
+      executableWillLaunchAtLogin: startupEnabled,
+    }),
+    setLoginItemSettings: (settings) => {
+      lastStartupSettings = settings;
+      startupEnabled = Boolean(settings.openAtLogin);
+    },
+  };
+  const startup = new StartupManager(mockApp, {
+    platform: 'win32',
+    env: { PORTABLE_EXECUTABLE_FILE: portablePath },
+    execPath: 'C:\\Temp\\atris-extracted\\AtrisTracker.exe',
+  });
+  assert.equal(startup.getLaunchPath(), portablePath);
+  assert.equal(startup.getStatus().enabled, false);
+  assert.equal(startup.setEnabled(true).enabled, true);
+  assert.equal(lastStartupSettings.path, portablePath);
+  assert.deepEqual(lastStartupSettings.args, ['--startup']);
+  assert.equal(startup.setEnabled(false).enabled, false);
 
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'atris-backend-'));
   const dbPath = path.join(tempDir, 'usage.db');
