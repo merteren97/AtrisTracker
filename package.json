@@ -15,9 +15,11 @@
     "preview": "vite preview",
     "test:backend": "node scripts/backend-smoke-test.js && node scripts/provider-probes-smoke-test.js",
     "prepare:linux-icons": "bash scripts/prepare-linux-icons.sh",
+    "prepare:windows-icon": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-windows-icon.ps1",
     "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "electron:start": "electron .",
-    "electron:build": "vite build && electron-builder"
+    "electron:build": "vite build && electron-builder",
+    "electron:build:win": "npm run prepare:windows-icon && vite build && electron-builder --win nsis"
   },
   "dependencies": {
     "clsx": "^2.1.1",
@@ -66,7 +68,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "assets/logo.jpg"
+      "icon": "build/windows-icon.png"
     },
     "linux": {
       "target": [
