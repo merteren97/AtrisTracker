@@ -3,8 +3,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const CLIScanner = require('../electron/cliScanner');
+const EnhancedCLIScanner = require('../electron/cliScannerEnhanced');
 const UsageDatabase = require('../electron/db');
 const AntigravityIntegration = require('../electron/antigravityIntegration');
+const AntigravityLocalQuotaProbe = require('../electron/antigravityLocalQuota');
 const StartupManager = require('../electron/startup');
 
 async function run() {
@@ -44,17 +46,94 @@ async function run() {
   });
   assert.equal(transientZero.length, 0);
 
+  // Reproduce the user's real /quota screenshot: 93.07% weekly remaining and
+  // 100% five-hour remaining. 100% remaining is a valid live zero-usage value,
+  // not an unknown/missing quota.
+  const localProbe = new AntigravityLocalQuotaProbe({ platform: 'win32' });
+  const localSummary = localProbe.parseQuotaSummary({
+    response: {
+      groups: [
+        {
+          displayName: 'Gemini Models',
+          buckets: [
+            {
+              bucketId: 'gemini-weekly',
+              displayName: 'Weekly Limit',
+              remainingFraction: 0.9307,
+              resetTime: '2026-08-17T08:29:00Z',
+            },
+            {
+              bucketId: 'gemini-5h',
+              displayName: 'Five Hour Limit',
+              remaining: { case: 'remainingFraction', value: 1 },
+            },
+          ],
+        },
+        {
+          displayName: 'Claude and GPT models',
+          buckets: [
+            { bucketId: 'claude-weekly', remainingFraction: 0 },
+          ],
+        },
+      ],
+    },
+  });
+  assert.equal(localSummary.weekly.usedPercent, 6.9);
+  assert.equal(localSummary.weekly.resetAt, '2026-08-17T08:29:00.000Z');
+  assert.equal(localSummary.fiveHour.usedPercent, 0);
+
+  const windowsProcesses = localProbe.parseWindowsProcessJson(
+    JSON.stringify([
+      { ProcessId: 4242, Name: 'agy.exe', CommandLine: 'C:\\Users\\Mert\\AppData\\Local\\agy\\bin\\agy.exe' },
+      {
+        ProcessId: 4243,
+        Name: 'language_server_windows_x64.exe',
+        CommandLine: 'C:\\Users\\Mert\\.gemini\\antigravity-cli\\bin\\language_server_windows_x64.exe',
+      },
+    ])
+  );
+  assert.deepEqual(windowsProcesses, [4242, 4243]);
+
+  const listeningPorts = localProbe.parseWindowsNetstat(
+    [
+      '  TCP    127.0.0.1:43123      0.0.0.0:0      LISTENING       4242',
+      '  TCP    127.0.0.1:43124      0.0.0.0:0      LISTENING       9999',
+      '  TCP    [::1]:43125          [::]:0         LISTENING       4243',
+      '  TCP    127.0.0.1:43126      127.0.0.1:50000 ESTABLISHED     4242',
+    ].join('\r\n'),
+    windowsProcesses
+  );
+  assert.deepEqual(listeningPorts, [43123, 43125]);
+
+  const enhancedScanner = new EnhancedCLIScanner(
+    {},
+    {
+      antigravityLocalQuota: {
+        fetch: async () => ({
+          accountEmail: 'merteren1997977@gmail.com',
+          fiveHour: localSummary.fiveHour,
+          weekly: localSummary.weekly,
+          source: 'test-local-quota-summary',
+        }),
+      },
+    }
+  );
+  enhancedScanner.detectAntigravityEmail = () => 'merteren1997977@gmail.com';
+  const liveAntigravity = await enhancedScanner.scanAntigravity();
+  assert.equal(liveAntigravity.account_email, 'merteren1997977@gmail.com');
+  assert.equal(liveAntigravity.rolling_5h_percent, 0);
+  assert.equal(liveAntigravity.weekly_usage_percent, 6.9);
+  assert.equal(liveAntigravity.scan_status, 'live');
+  assert.equal(enhancedScanner.hasObservedQuota(liveAntigravity), true);
+
   const integrationDir = fs.mkdtempSync(path.join(os.tmpdir(), 'atris-ag-integration-'));
   try {
-    const integration = new AntigravityIntegration();
+    const integration = new AntigravityIntegration({ platform: 'win32' });
     integration.baseDir = integrationDir;
     integration.settingsPath = path.join(integrationDir, 'settings.json');
     integration.cachePath = path.join(integrationDir, 'atris-statusline-state.json');
     integration.backupPath = path.join(integrationDir, 'atris-statusline-backup.json');
-    integration.scriptPath = path.join(
-      integrationDir,
-      process.platform === 'win32' ? 'atris-statusline-bridge.ps1' : 'atris-statusline-bridge.sh'
-    );
+    integration.scriptPath = path.join(integrationDir, 'atris-statusline-bridge.ps1');
 
     const commentedSettings = `\uFEFF// Antigravity accepts comments in settings.json\n{\n  "theme": "dark", // keep this preference\n  /* existing custom status line */\n  "statusLine": {\n    "type": "command",\n    "command": "existing-statusline-command"\n  }\n}\n`;
     fs.writeFileSync(integration.settingsPath, commentedSettings, 'utf8');
@@ -65,8 +144,27 @@ async function run() {
     const enabled = integration.enable();
     assert.equal(enabled.enabled, true);
     assert.equal(fs.existsSync(integration.scriptPath), true);
-    const enabledSettings = JSON.parse(fs.readFileSync(integration.settingsPath, 'utf8'));
-    assert.ok(enabledSettings.statusLine.command.includes('atris-statusline-bridge'));
+    let enabledSettings = JSON.parse(fs.readFileSync(integration.settingsPath, 'utf8'));
+    assert.ok(enabledSettings.statusLine.command.includes('-EncodedCommand'));
+    assert.equal(/(?:^|\s)-File(?:\s|$)/i.test(enabledSettings.statusLine.command), false);
+
+    const encoded = enabledSettings.statusLine.command.split('-EncodedCommand ')[1];
+    const decodedLauncher = Buffer.from(encoded, 'base64').toString('utf16le');
+    assert.ok(decodedLauncher.includes(integration.scriptPath));
+
+    // Reproduce the v1.0.1 Windows failure visible in the screenshot. The old
+    // command passes quoted path characters through to PowerShell -File.
+    enabledSettings.statusLine.command =
+      `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${integration.scriptPath}"`;
+    fs.writeFileSync(integration.settingsPath, `${JSON.stringify(enabledSettings, null, 2)}\n`, 'utf8');
+    assert.equal(integration.getStatus().needs_repair, true);
+
+    const repaired = integration.repairIfNeeded();
+    assert.equal(repaired.enabled, true);
+    assert.equal(repaired.needs_repair, false);
+    enabledSettings = JSON.parse(fs.readFileSync(integration.settingsPath, 'utf8'));
+    assert.ok(enabledSettings.statusLine.command.includes('-EncodedCommand'));
+    assert.equal(/(?:^|\s)-File(?:\s|$)/i.test(enabledSettings.statusLine.command), false);
 
     integration.disable();
     const restoredRaw = fs.readFileSync(integration.settingsPath, 'utf8');
