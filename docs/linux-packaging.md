@@ -14,9 +14,11 @@ npm run build
 npx electron-builder --linux --publish never
 ```
 
-Expected release artifacts use the form:
+Expected x64 release artifacts use Electron Builder's target-specific architecture labels:
 
-- `AtrisTracker-<version>-x64.AppImage`
-- `AtrisTracker-<version>-x64.deb`
+- `AtrisTracker-<version>-x86_64.AppImage`
+- `AtrisTracker-<version>-amd64.deb`
+
+The Debian target also requires maintainer metadata; AtrisTracker sets it explicitly in the Linux build configuration.
 
 The PR CI runs the same icon preparation and real Electron Builder packaging path used by the release workflow, then verifies that both files exist and are non-empty.
