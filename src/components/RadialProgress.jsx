@@ -4,7 +4,11 @@ export default function RadialProgress({ percentage = null, label = '5h Rolling 
   const radius = 64;
   const strokeWidth = 10;
   const circumference = 2 * Math.PI * radius;
-  const hasData = Number.isFinite(Number(percentage));
+  const hasData =
+    percentage !== null &&
+    percentage !== undefined &&
+    percentage !== '' &&
+    Number.isFinite(Number(percentage));
   const clampedPercent = hasData ? Math.min(100, Math.max(0, Number(percentage))) : 0;
   const remainingPercent = Math.max(0, 100 - clampedPercent);
   const strokeDashoffset = circumference - (clampedPercent / 100) * circumference;
