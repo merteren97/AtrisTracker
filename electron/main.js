@@ -26,6 +26,7 @@ let scanner = null;
 let antigravityIntegration = null;
 let startupManager = null;
 let updateManager = null;
+let lastScanResult = null;
 let pollingInterval = null;
 let updatePollingInterval = null;
 let alwaysOnTopState = true;
@@ -80,6 +81,12 @@ function createWindow() {
   });
 }
 
+async function runUsageScan() {
+  if (!scanner) return null;
+  lastScanResult = await scanner.scanAll();
+  return lastScanResult;
+}
+
 function createTray() {
   const iconPath = path.join(__dirname, '../assets/logo.jpg');
   const icon = fs.existsSync(iconPath)
@@ -100,7 +107,7 @@ function createTray() {
       label: 'Yenile / Tara',
       click: async () => {
         if (scanner) {
-          await scanner.scanAll();
+          await runUsageScan();
           if (mainWindow) mainWindow.webContents.send('usage-updated');
         }
       },
@@ -204,7 +211,7 @@ app.whenReady().then(async () => {
     console.warn('Antigravity telemetry bridge repair skipped:', error.message);
   }
 
-  await scanner.scanAll();
+  await runUsageScan();
   createWindow();
   createTray();
 
@@ -216,7 +223,7 @@ app.whenReady().then(async () => {
   }, UPDATE_CHECK_INTERVAL_MS);
 
   pollingInterval = setInterval(async () => {
-    await scanner.scanAll();
+    await runUsageScan();
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('usage-updated');
     }
@@ -231,10 +238,9 @@ ipcMain.handle('get-latest-usage', (event, tool) => {
   return db ? db.getLatestSnapshot(tool) : null;
 });
 
-ipcMain.handle('scan-usage', async () => {
-  if (!scanner) return null;
-  return scanner.scanAll();
-});
+ipcMain.handle('scan-usage', () => runUsageScan());
+
+ipcMain.handle('get-scan-status', () => lastScanResult);
 
 ipcMain.handle('get-usage-history', (event, tool, limit) => {
   return db ? db.getUsageHistory(tool, limit) : [];
@@ -263,7 +269,7 @@ ipcMain.handle('get-antigravity-integration-status', () => {
 ipcMain.handle('enable-antigravity-integration', async () => {
   if (!antigravityIntegration) return null;
   const status = antigravityIntegration.enable();
-  if (scanner) await scanner.scanAll();
+  if (scanner) await runUsageScan();
   return status;
 });
 
