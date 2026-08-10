@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import Header from './components/Header';
 import NavigationTabs from './components/NavigationTabs';
 import AccountSelector from './components/AccountSelector';
+import AntigravityIntegration from './components/AntigravityIntegration';
 import RadialProgress from './components/RadialProgress';
 import CountdownTimer from './components/CountdownTimer';
 import AccountCard from './components/AccountCard';
@@ -12,6 +13,8 @@ import OverviewView from './components/OverviewView';
 export default function App() {
   const [activeTab, setActiveTab] = useState('antigravity');
   const [isScanning, setIsScanning] = useState(false);
+  const [integrationBusy, setIntegrationBusy] = useState(false);
+  const [antigravityIntegration, setAntigravityIntegration] = useState(null);
   const [accountsByTool, setAccountsByTool] = useState({
     antigravity: [],
     codex: [],
@@ -28,6 +31,15 @@ export default function App() {
     claude: null,
   });
   const [historyData, setHistoryData] = useState([]);
+
+  const fetchAntigravityIntegrationStatus = useCallback(async () => {
+    if (!window.electronAPI?.getAntigravityIntegrationStatus) {
+      setAntigravityIntegration({ enabled: false });
+      return;
+    }
+    const status = await window.electronAPI.getAntigravityIntegrationStatus();
+    setAntigravityIntegration(status);
+  }, []);
 
   const fetchUsageData = useCallback(async () => {
     if (window.electronAPI) {
@@ -110,12 +122,7 @@ export default function App() {
         timestamp: now.toISOString(),
       };
 
-      setUsageData({
-        antigravity: mockAg,
-        codex: null,
-        claude: null,
-      });
-
+      setUsageData({ antigravity: mockAg, codex: null, claude: null });
       setHistoryData([
         { timestamp: new Date(now - 400000).toISOString(), rolling_5h_percent: 20 },
         { timestamp: new Date(now - 300000).toISOString(), rolling_5h_percent: 28 },
@@ -127,34 +134,46 @@ export default function App() {
 
   const handleSelectAccount = (email) => {
     if (activeTab !== 'overview') {
-      setSelectedAccounts((previous) => ({
-        ...previous,
-        [activeTab]: email,
-      }));
+      setSelectedAccounts((previous) => ({ ...previous, [activeTab]: email }));
     }
   };
 
   const handleManualScan = async () => {
     setIsScanning(true);
     try {
-      if (window.electronAPI) {
-        await window.electronAPI.scanUsage();
-      }
+      if (window.electronAPI) await window.electronAPI.scanUsage();
       await fetchUsageData();
+      await fetchAntigravityIntegrationStatus();
     } finally {
       setTimeout(() => setIsScanning(false), 500);
     }
   };
 
+  const handleIntegrationChange = async (enable) => {
+    if (!window.electronAPI) return;
+    setIntegrationBusy(true);
+    try {
+      const status = enable
+        ? await window.electronAPI.enableAntigravityIntegration()
+        : await window.electronAPI.disableAntigravityIntegration();
+      setAntigravityIntegration(status);
+      await fetchUsageData();
+    } finally {
+      setIntegrationBusy(false);
+    }
+  };
+
   useEffect(() => {
     fetchUsageData();
+    fetchAntigravityIntegrationStatus();
     const unsubscribe = window.electronAPI?.onUsageUpdated?.(() => {
       fetchUsageData();
+      fetchAntigravityIntegrationStatus();
     });
     return () => {
       if (typeof unsubscribe === 'function') unsubscribe();
     };
-  }, [fetchUsageData]);
+  }, [fetchUsageData, fetchAntigravityIntegrationStatus]);
 
   const currentData =
     activeTab === 'antigravity'
@@ -188,6 +207,15 @@ export default function App() {
           <OverviewView usageData={usageData} />
         ) : (
           <>
+            {activeTab === 'antigravity' && (
+              <AntigravityIntegration
+                status={antigravityIntegration}
+                busy={integrationBusy}
+                onEnable={() => handleIntegrationChange(true)}
+                onDisable={() => handleIntegrationChange(false)}
+              />
+            )}
+
             <AccountSelector
               accounts={currentAccounts}
               selectedAccountEmail={selectedEmail}
