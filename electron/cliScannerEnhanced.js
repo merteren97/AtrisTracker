@@ -2,6 +2,7 @@ const path = require('path');
 const CLIScanner = require('./cliScanner');
 const AntigravityLocalQuotaProbe = require('./antigravityLocalQuota');
 const CodexAppServerQuota = require('./codexAppServer');
+const ClaudeCredentialsResolver = require('./claudeCredentials');
 
 class EnhancedCLIScanner extends CLIScanner {
   constructor(db, options = {}) {
@@ -10,6 +11,8 @@ class EnhancedCLIScanner extends CLIScanner {
       options.antigravityLocalQuota || new AntigravityLocalQuotaProbe(options.antigravityProbeOptions);
     this.codexAppServer =
       options.codexAppServer || new CodexAppServerQuota(options.codexAppServerOptions);
+    this.claudeCredentials =
+      options.claudeCredentials || new ClaudeCredentialsResolver(options.claudeCredentialOptions);
   }
 
   snapshotWindow(snapshot, kind) {
@@ -115,6 +118,16 @@ class EnhancedCLIScanner extends CLIScanner {
       fallback.error = `${fallback.error || 'Codex kota verisi alınamadı'}; app-server: ${appServerError.message}`;
     }
     return fallback;
+  }
+
+  detectClaudeEmail() {
+    return this.claudeCredentials.detectEmail() || super.detectClaudeEmail();
+  }
+
+  readClaudeOAuthToken() {
+    // Never persist or log the token. The resolver only returns it in-memory to
+    // the existing Anthropic usage request made by the base scanner.
+    return this.claudeCredentials.readOAuthToken() || super.readClaudeOAuthToken();
   }
 }
 
