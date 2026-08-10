@@ -20,6 +20,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   disableAntigravityIntegration: () =>
     ipcRenderer.invoke('disable-antigravity-integration'),
 
+  // Startup controls (tray uses the same backend; exposed for a future settings UI)
+  getStartupStatus: () => ipcRenderer.invoke('get-startup-status'),
+  setStartupEnabled: (enabled) => ipcRenderer.invoke('set-startup-enabled', Boolean(enabled)),
+
   onUsageUpdated: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = () => callback();
