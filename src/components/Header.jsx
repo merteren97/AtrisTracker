@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { RotateCw, Pin, PinOff, Minus, X, Activity } from 'lucide-react';
+import { RotateCw, Pin, PinOff, Minus, X } from 'lucide-react';
+import packageInfo from '../../package.json';
 
 export default function Header({ onRefresh, isScanning }) {
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(true);
@@ -27,7 +28,6 @@ export default function Header({ onRefresh, isScanning }) {
 
   return (
     <header className="app-drag-region flex items-center justify-between px-3 py-2 bg-slate-900/90 border-b border-white/10 backdrop-blur-md select-none rounded-t-xl">
-      {/* Title & Logo */}
       <div className="flex items-center space-x-2">
         <img
           src="./logo.jpg"
@@ -39,14 +39,12 @@ export default function Header({ onRefresh, isScanning }) {
             AtrisTracker
           </span>
           <span className="text-[9px] text-slate-400 font-mono leading-none">
-            v1.0 • Overlay
+            v{packageInfo.version} • Overlay
           </span>
         </div>
       </div>
 
-      {/* Action Controls */}
       <div className="app-no-drag flex items-center space-x-1">
-        {/* Refresh Button */}
         <button
           onClick={onRefresh}
           disabled={isScanning}
@@ -58,7 +56,6 @@ export default function Header({ onRefresh, isScanning }) {
           <RotateCw className={`w-3.5 h-3.5 ${isScanning ? 'animate-spin text-cyan-400' : ''}`} />
         </button>
 
-        {/* Pin / Always On Top Button */}
         <button
           onClick={handleTogglePin}
           title={isAlwaysOnTop ? 'Üstte Tut (Aktif)' : 'Üstte Tut (Pasif)'}
@@ -71,7 +68,6 @@ export default function Header({ onRefresh, isScanning }) {
           {isAlwaysOnTop ? <Pin className="w-3.5 h-3.5" /> : <PinOff className="w-3.5 h-3.5" />}
         </button>
 
-        {/* Minimize Button */}
         <button
           onClick={handleMinimize}
           title="Küçült"
@@ -80,7 +76,6 @@ export default function Header({ onRefresh, isScanning }) {
           <Minus className="w-3.5 h-3.5" />
         </button>
 
-        {/* Close Button */}
         <button
           onClick={handleClose}
           title="Kapat (Tepsiye Küçült)"
