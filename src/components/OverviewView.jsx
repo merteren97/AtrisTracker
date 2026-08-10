@@ -1,5 +1,5 @@
 import React from 'react';
-import { Cpu, Terminal, Sparkles, AlertCircle } from 'lucide-react';
+import { Cpu, Terminal, Sparkles } from 'lucide-react';
 
 export default function OverviewView({ usageData }) {
   const tools = [
@@ -33,14 +33,16 @@ export default function OverviewView({ usageData }) {
     <div className="space-y-3">
       <div className="flex items-center justify-between text-xs text-slate-300 font-semibold px-1">
         <span>Tüm Servisler Özeti</span>
-        <span className="text-[10px] text-slate-400 font-mono">3 Aktif Araç</span>
+        <span className="text-[10px] text-slate-400 font-mono">3 Araç</span>
       </div>
 
       <div className="space-y-2">
         {tools.map((tool) => {
           const Icon = tool.icon;
-          const data = tool.data || {};
-          const percent = Math.round(data.rolling_5h_percent || data.usage_percent || 0);
+          const data = tool.data || null;
+          const rawPercent = data?.rolling_5h_percent ?? data?.usage_percent;
+          const hasData = Number.isFinite(Number(rawPercent));
+          const percent = hasData ? Math.round(Number(rawPercent)) : 0;
 
           return (
             <div
@@ -55,17 +57,16 @@ export default function OverviewView({ usageData }) {
                   <div className="flex flex-col">
                     <span className="text-xs font-bold text-white">{tool.name}</span>
                     <span className="text-[9px] text-slate-400 font-mono">
-                      {data.account_email || 'Aktif Oturum'}
+                      {data?.account_email || 'Kayıtlı gerçek veri yok'}
                     </span>
                   </div>
                 </div>
 
                 <span className={`text-xs font-bold font-mono px-2 py-0.5 rounded-md border ${tool.badgeColor}`}>
-                  %{percent}
+                  {hasData ? `%${percent}` : '—'}
                 </span>
               </div>
 
-              {/* Progress Bar */}
               <div className="space-y-1">
                 <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden border border-white/5">
                   <div
@@ -74,7 +75,7 @@ export default function OverviewView({ usageData }) {
                   />
                 </div>
                 <div className="flex items-center justify-between text-[9px] text-slate-400 font-mono">
-                  <span>{data.used_count || 0} / {data.limit_count || 0} istek</span>
+                  <span>{hasData ? `%${percent} kullanıldı` : 'Tahmini değer gösterilmiyor'}</span>
                   <span>5h Rolling Window</span>
                 </div>
               </div>
