@@ -6,7 +6,10 @@ export default function AntigravityIntegration({ status, busy, onEnable, onDisab
 
   const enabled = Boolean(status.enabled);
   const hasTelemetry = Boolean(status.last_telemetry_at);
-  const detail = enabled
+  const settingsError = status.settings_error || null;
+  const detail = settingsError
+    ? settingsError
+    : enabled
     ? hasTelemetry
       ? '5h / haftalık değerler resmi statusline telemetry üzerinden okunur.'
       : 'Bağlantı hazır; Antigravity CLI açıldığında ilk telemetry kaydedilir.'
@@ -23,16 +26,22 @@ export default function AntigravityIntegration({ status, busy, onEnable, onDisab
           )}
         </div>
         <div className="min-w-0">
-          <div className="text-[10px] font-semibold text-slate-200">
-            {enabled ? 'Canlı kota bağlantısı aktif' : 'Canlı Antigravity kotasını bağla'}
+          <div className={`text-[10px] font-semibold ${settingsError ? 'text-rose-300' : 'text-slate-200'}`}>
+            {settingsError
+              ? 'Antigravity ayarı okunamadı'
+              : enabled
+              ? 'Canlı kota bağlantısı aktif'
+              : 'Canlı Antigravity kotasını bağla'}
           </div>
-          <div className="text-[9px] text-slate-400 truncate">{detail}</div>
+          <div className={`text-[9px] truncate ${settingsError ? 'text-rose-400/80' : 'text-slate-400'}`}>
+            {detail}
+          </div>
         </div>
       </div>
 
       <button
         type="button"
-        disabled={busy}
+        disabled={busy || Boolean(settingsError)}
         onClick={enabled ? onDisable : onEnable}
         className={`shrink-0 text-[9px] font-semibold px-2 py-1 rounded-lg border transition-colors disabled:opacity-50 ${
           enabled
