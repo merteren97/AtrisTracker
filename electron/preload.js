@@ -20,9 +20,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   disableAntigravityIntegration: () =>
     ipcRenderer.invoke('disable-antigravity-integration'),
 
-  // Startup controls (tray uses the same backend; exposed for a future settings UI)
+  // Startup controls
   getStartupStatus: () => ipcRenderer.invoke('get-startup-status'),
   setStartupEnabled: (enabled) => ipcRenderer.invoke('set-startup-enabled', Boolean(enabled)),
+
+  // User-controlled update checks. Checking can be automatic, downloading/installing is not.
+  getUpdateStatus: () => ipcRenderer.invoke('get-update-status'),
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  openUpdate: () => ipcRenderer.invoke('open-update'),
+  onUpdateStatus: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, status) => callback(status);
+    ipcRenderer.on('update-status', listener);
+    return () => ipcRenderer.removeListener('update-status', listener);
+  },
 
   onUsageUpdated: (callback) => {
     if (typeof callback !== 'function') return () => {};
