@@ -2,10 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const https = require('https');
-const { execFileSync } = require('child_process');
 
 const FIVE_HOURS_MINUTES = 5 * 60;
 const ONE_WEEK_MINUTES = 7 * 24 * 60;
+const ANTIGRAVITY_TELEMETRY_MAX_AGE_MS = 10 * 60 * 1000;
 
 class CLIScanner {
   constructor(db) {
@@ -27,6 +27,9 @@ class CLIScanner {
         if (result?.account_email && this.hasObservedQuota(result)) {
           this.db.addSnapshot(result);
         } else if (result?.account_email) {
+          // Account discovery and quota discovery are intentionally separate.
+          // A new login must be remembered even when quota telemetry has not
+          // arrived yet, but missing data must never become a fake zero snapshot.
           this.db.saveAccount(result.tool, result.account_email, true);
         }
         results[key] = result;
@@ -51,6 +54,27 @@ class CLIScanner {
     );
   }
 
+  readJson(filePath) {
+    try {
+      if (!filePath || !fs.existsSync(filePath)) return null;
+      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    } catch {
+      return null;
+    }
+  }
+
+  readRecentJson(filePath, maxAgeMs) {
+    try {
+      if (!fs.existsSync(filePath)) return null;
+      const stat = fs.statSync(filePath);
+      if (Date.now() - stat.mtimeMs > maxAgeMs) return null;
+      const payload = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      return { payload, observedAtMs: stat.mtimeMs };
+    } catch {
+      return null;
+    }
+  }
+
   decodeJWT(token) {
     try {
       if (!token || typeof token !== 'string') return null;
@@ -64,18 +88,8 @@ class CLIScanner {
     }
   }
 
-  readJson(filePath) {
-    try {
-      if (!filePath || !fs.existsSync(filePath)) return null;
-      return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    } catch {
-      return null;
-    }
-  }
-
   findEmail(value) {
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    const visited = new Set();
     const preferredKeys = [
       'email',
       'emailAddress',
@@ -84,6 +98,7 @@ class CLIScanner {
       'account_email',
       'active',
     ];
+    const visited = new Set();
 
     const walk = (node, depth = 0) => {
       if (depth > 8 || node === null || node === undefined) return null;
@@ -153,61 +168,6 @@ class CLIScanner {
     };
   }
 
-  findExecutable(name, explicitPaths = []) {
-    for (const candidate of explicitPaths) {
-      if (candidate && fs.existsSync(candidate)) return candidate;
-    }
-
-    try {
-      const locator = process.platform === 'win32' ? 'where.exe' : 'which';
-      const stdout = execFileSync(locator, [name], {
-        encoding: 'utf8',
-        timeout: 3000,
-        windowsHide: true,
-        stdio: ['ignore', 'pipe', 'ignore'],
-      });
-      const first = stdout
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .find(Boolean);
-      return first || null;
-    } catch {
-      return null;
-    }
-  }
-
-  parseJsonOutput(stdout) {
-    if (!stdout || typeof stdout !== 'string') return null;
-    const trimmed = stdout.trim();
-    if (!trimmed) return null;
-    try {
-      return JSON.parse(trimmed);
-    } catch {
-      const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-      for (let index = lines.length - 1; index >= 0; index -= 1) {
-        try {
-          return JSON.parse(lines[index]);
-        } catch {
-          // Keep looking for the final structured line.
-        }
-      }
-      return null;
-    }
-  }
-
-  runJsonCommand(executable, args, timeout = 12000) {
-    const stdout = execFileSync(executable, args, {
-      encoding: 'utf8',
-      timeout,
-      windowsHide: true,
-      maxBuffer: 4 * 1024 * 1024,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    const json = this.parseJsonOutput(stdout);
-    if (!json) throw new Error('CLI returned no parseable JSON quota payload');
-    return json;
-  }
-
   classifyWindow(context, windowMinutes) {
     const normalized = String(context || '').toLowerCase().replace(/[\s_-]+/g, ' ');
     if (
@@ -245,8 +205,7 @@ class CLIScanner {
       if (number !== null) return this.clampPercent(number);
     }
 
-    const fractionKeys = ['used_fraction', 'usage_fraction'];
-    for (const key of fractionKeys) {
+    for (const key of ['used_fraction', 'usage_fraction']) {
       const number = this.toFiniteNumber(node[key]);
       if (number !== null) return this.clampPercent(number * 100);
     }
@@ -267,7 +226,24 @@ class CLIScanner {
     return null;
   }
 
-  collectQuotaWindows(payload) {
+  extractResetAt(node, observedAtMs = Date.now()) {
+    if (!node || typeof node !== 'object') return null;
+    const absolute =
+      node.reset_time ??
+      node.resetTime ??
+      node.reset_at ??
+      node.resets_at ??
+      node.resetAt ??
+      null;
+    const normalized = this.normalizeReset(absolute);
+    if (normalized) return normalized;
+
+    const seconds = this.toFiniteNumber(node.reset_in_seconds ?? node.resetInSeconds);
+    if (seconds === null || seconds < 0) return null;
+    return new Date(observedAtMs + seconds * 1000).toISOString();
+  }
+
+  collectQuotaWindows(payload, observedAtMs = Date.now()) {
     const candidates = [];
     const visited = new Set();
 
@@ -297,15 +273,17 @@ class CLIScanner {
         .join(' ');
       const kind = this.classifyWindow(context, windowMinutes);
       if (kind) {
+        const remainingFraction = this.toFiniteNumber(
+          node.remaining_fraction ?? node.remainingFraction
+        );
         const usedPercent = this.extractUsedPercent(node);
-        const resetAt =
-          node.reset_time ??
-          node.resetTime ??
-          node.reset_at ??
-          node.resets_at ??
-          node.resetAt ??
-          null;
-        if (usedPercent !== null || resetAt !== null) {
+        const resetAt = this.extractResetAt(node, observedAtMs);
+
+        // Antigravity can temporarily send a zeroed/absent quota object while
+        // a subagent is active. A raw 0 remaining value without any reset
+        // metadata is therefore not trusted as a real 100%-used quota.
+        const suspiciousTransientZero = remainingFraction === 0 && !resetAt;
+        if (!suspiciousTransientZero && (usedPercent !== null || resetAt !== null)) {
           candidates.push({ kind, usedPercent, resetAt, context });
         }
       }
@@ -327,6 +305,11 @@ class CLIScanner {
       const rightPercent = right.usedPercent ?? -1;
       return rightPercent - leftPercent;
     })[0];
+  }
+
+  sameEmail(left, right) {
+    if (!left || !right) return false;
+    return String(left).trim().toLowerCase() === String(right).trim().toLowerCase();
   }
 
   detectAntigravityEmail() {
@@ -361,6 +344,13 @@ class CLIScanner {
       const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
       for (const file of files) {
         const content = fs.readFileSync(file.path, 'utf8');
+        const authenticatedMatches = [
+          ...content.matchAll(/authenticated successfully as\s+([^\s,;]+)/gi),
+          ...content.matchAll(/applyAuthResult:\s*email=([^,\s]+)/gi),
+        ];
+        if (authenticatedMatches.length) {
+          return authenticatedMatches[authenticatedMatches.length - 1][1];
+        }
         const matches = content.match(emailRegex);
         if (matches?.length) return matches[matches.length - 1];
       }
@@ -371,51 +361,61 @@ class CLIScanner {
   }
 
   async scanAntigravity() {
-    const email = this.detectAntigravityEmail();
-    const localAppData = process.env.LOCALAPPDATA || path.join(this.userHome, 'AppData', 'Local');
-    const executable = this.findExecutable('agy', [
-      path.join(localAppData, 'agy', 'bin', 'agy.exe'),
-      path.join(this.userHome, '.local', 'bin', process.platform === 'win32' ? 'agy.exe' : 'agy'),
-    ]);
+    const detectedEmail = this.detectAntigravityEmail();
+    const cachePath = path.join(
+      this.userHome,
+      '.gemini',
+      'antigravity-cli',
+      'atris-statusline-state.json'
+    );
+    const telemetry = this.readRecentJson(cachePath, ANTIGRAVITY_TELEMETRY_MAX_AGE_MS);
 
-    if (!executable) {
-      return this.createSnapshot('antigravity', email, null, null, 'antigravity-cli');
-    }
-
-    let payload = null;
-    let lastError = null;
-    for (const slashCommand of ['/quota', '/usage']) {
-      try {
-        payload = this.runJsonCommand(executable, [
-          '--output-format',
-          'json',
-          '--print',
-          slashCommand,
-        ]);
-        break;
-      } catch (error) {
-        lastError = error;
-      }
-    }
-
-    if (!payload) {
-      const result = this.createSnapshot('antigravity', email, null, null, 'antigravity-cli');
-      result.error = lastError?.message || 'Antigravity quota command failed';
+    if (!telemetry) {
+      const result = this.createSnapshot(
+        'antigravity',
+        detectedEmail,
+        null,
+        null,
+        'antigravity-statusline'
+      );
+      result.error = 'Canlı Antigravity statusline telemetry henüz alınmadı';
       return result;
     }
 
-    const candidates = this.collectQuotaWindows(payload);
+    const payload = telemetry.payload;
+    const telemetryEmail = this.findEmail(payload?.email) || this.findEmail(payload);
+    const accountEmail = telemetryEmail || detectedEmail;
+
+    // Never assign a recently cached payload to a different login that was
+    // already observed in Antigravity's own auth state/logs.
+    if (detectedEmail && telemetryEmail && !this.sameEmail(detectedEmail, telemetryEmail)) {
+      const result = this.createSnapshot(
+        'antigravity',
+        detectedEmail,
+        null,
+        null,
+        'antigravity-statusline'
+      );
+      result.error = 'Antigravity hesabı değişti; yeni hesaptan telemetry bekleniyor';
+      return result;
+    }
+
+    const candidates = this.collectQuotaWindows(
+      payload?.quota || {},
+      telemetry.observedAtMs
+    );
     const fiveHour = this.selectTightestWindow(candidates, '5h');
     const weekly = this.selectTightestWindow(candidates, 'weekly');
     const result = this.createSnapshot(
       'antigravity',
-      email,
+      accountEmail,
       fiveHour,
       weekly,
-      'antigravity-cli:/quota'
+      'antigravity-statusline'
     );
+
     if (!this.hasObservedQuota(result)) {
-      result.error = 'Antigravity returned JSON, but no 5h/weekly quota window was recognized';
+      result.error = 'Statusline payload içinde güvenilir 5h/weekly quota bulunamadı';
     }
     return result;
   }
@@ -497,8 +497,6 @@ class CLIScanner {
     let fiveHour = windows.find((window) => window.kind === '5h') || null;
     let weekly = windows.find((window) => window.kind === 'weekly') || null;
 
-    // Older payloads can omit window_minutes. Codex conventionally exposes the
-    // short rolling window as primary and the long rolling window as secondary.
     if (!fiveHour && rateLimits.primary && !this.toFiniteNumber(rateLimits.primary.window_minutes)) {
       fiveHour = windows[0] || null;
     }
@@ -526,9 +524,8 @@ class CLIScanner {
       authMtimeMs = 0;
     }
 
-    const sessionsDir = path.join(codexDir, 'sessions');
     const files = this.listFilesRecursive(
-      sessionsDir,
+      path.join(codexDir, 'sessions'),
       (_filePath, name) => name.endsWith('.jsonl')
     )
       .sort((a, b) => b.mtimeMs - a.mtimeMs)
@@ -551,10 +548,9 @@ class CLIScanner {
         const event = this.extractCodexRateLimits(parsed);
         if (!event) continue;
 
-        const eventTimeMs = event.timestamp ? new Date(event.timestamp).getTime() : file.mtimeMs;
-        // Never attribute a quota event clearly older than the current auth file
-        // to a newly logged-in account. A fresh Codex interaction will emit a new event.
-        if (authMtimeMs && Number.isFinite(eventTimeMs) && eventTimeMs < authMtimeMs - 5 * 60 * 1000) {
+        const parsedEventTime = event.timestamp ? new Date(event.timestamp).getTime() : NaN;
+        const eventTimeMs = Number.isFinite(parsedEventTime) ? parsedEventTime : file.mtimeMs;
+        if (authMtimeMs && eventTimeMs < authMtimeMs - 5 * 60 * 1000) {
           continue;
         }
 
@@ -579,8 +575,7 @@ class CLIScanner {
       path.join(this.userHome, '.claude', 'credentials.json'),
     ];
     for (const file of files) {
-      const data = this.readJson(file);
-      const email = this.findEmail(data);
+      const email = this.findEmail(this.readJson(file));
       if (email) return email;
     }
     return null;
@@ -605,29 +600,27 @@ class CLIScanner {
 
   fetchJson(url, headers = {}, timeoutMs = 10000) {
     return new Promise((resolve, reject) => {
-      const request = https.get(
-        url,
-        { headers },
-        (response) => {
-          let body = '';
-          response.setEncoding('utf8');
-          response.on('data', (chunk) => {
-            body += chunk;
-            if (body.length > 2 * 1024 * 1024) request.destroy(new Error('Response too large'));
-          });
-          response.on('end', () => {
-            if (response.statusCode < 200 || response.statusCode >= 300) {
-              reject(new Error(`HTTP ${response.statusCode} from usage endpoint`));
-              return;
-            }
-            try {
-              resolve(JSON.parse(body));
-            } catch {
-              reject(new Error('Usage endpoint returned invalid JSON'));
-            }
-          });
-        }
-      );
+      const request = https.get(url, { headers }, (response) => {
+        let body = '';
+        response.setEncoding('utf8');
+        response.on('data', (chunk) => {
+          body += chunk;
+          if (body.length > 2 * 1024 * 1024) {
+            request.destroy(new Error('Response too large'));
+          }
+        });
+        response.on('end', () => {
+          if (response.statusCode < 200 || response.statusCode >= 300) {
+            reject(new Error(`HTTP ${response.statusCode} from usage endpoint`));
+            return;
+          }
+          try {
+            resolve(JSON.parse(body));
+          } catch {
+            reject(new Error('Usage endpoint returned invalid JSON'));
+          }
+        });
+      });
       request.setTimeout(timeoutMs, () => request.destroy(new Error('Usage endpoint timed out')));
       request.on('error', reject);
     });
@@ -657,8 +650,6 @@ class CLIScanner {
     }
 
     try {
-      // This is the same OAuth usage surface Claude Code uses for /usage.
-      // The access token is read only in memory and is never persisted by AtrisTracker.
       const payload = await this.fetchJson('https://api.anthropic.com/api/oauth/usage', {
         Authorization: `Bearer ${token}`,
         'anthropic-beta': 'oauth-2025-04-20',
