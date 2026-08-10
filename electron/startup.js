@@ -44,15 +44,22 @@ class StartupManager {
   setEnabled(enabled) {
     if (!this.isSupported()) return this.getStatus();
 
+    const openAtLogin = Boolean(enabled);
     const path = this.getLaunchPath();
     const args = this.getLaunchArgs();
-    this.app.setLoginItemSettings({
-      openAtLogin: Boolean(enabled),
+    const settings = {
+      openAtLogin,
       path,
       args,
       name: 'AtrisTracker',
-      enabled: Boolean(enabled),
-    });
+    };
+
+    // When enabling, explicitly re-approve the entry in Windows Startup Apps.
+    // When disabling, openAtLogin=false removes the run item instead of leaving
+    // behind a disabled registry entry.
+    if (openAtLogin) settings.enabled = true;
+
+    this.app.setLoginItemSettings(settings);
     return this.getStatus();
   }
 }
