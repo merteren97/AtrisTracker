@@ -104,8 +104,8 @@ jobs:
       - name: Verify Linux Artifacts
         if: matrix.os == 'ubuntu-latest'
         run: |
-          APPIMAGE="release/AtrisTracker-${{ steps.release.outputs.version }}-x64.AppImage"
-          DEB="release/AtrisTracker-${{ steps.release.outputs.version }}-x64.deb"
+          APPIMAGE="release/AtrisTracker-${{ steps.release.outputs.version }}-x86_64.AppImage"
+          DEB="release/AtrisTracker-${{ steps.release.outputs.version }}-amd64.deb"
 
           test -s "$APPIMAGE" || { echo "Missing AppImage: $APPIMAGE"; exit 1; }
           test -s "$DEB" || { echo "Missing Debian package: $DEB"; exit 1; }
