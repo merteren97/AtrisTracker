@@ -30,6 +30,20 @@ class AntigravityIntegration {
     }
   }
 
+  readSettingsStrict() {
+    if (!fs.existsSync(this.settingsPath)) return {};
+    let settings;
+    try {
+      settings = JSON.parse(fs.readFileSync(this.settingsPath, 'utf8'));
+    } catch (error) {
+      throw new Error(`Antigravity settings.json okunamadı: ${error.message}`);
+    }
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+      throw new Error('Antigravity settings.json geçerli bir JSON nesnesi değil.');
+    }
+    return settings;
+  }
+
   writeJsonAtomic(filePath, value) {
     this.ensureBaseDir();
     const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
@@ -50,7 +64,13 @@ class AntigravityIntegration {
   }
 
   getStatus() {
-    const settings = this.readJson(this.settingsPath, {});
+    let settings = {};
+    let settingsError = null;
+    try {
+      settings = this.readSettingsStrict();
+    } catch (error) {
+      settingsError = error.message;
+    }
     const command = settings?.statusLine?.command || '';
     let lastTelemetryAt = null;
     try {
@@ -64,17 +84,14 @@ class AntigravityIntegration {
     return {
       enabled: this.isOurCommand(command),
       settings_found: fs.existsSync(this.settingsPath),
+      settings_error: settingsError,
       last_telemetry_at: lastTelemetryAt,
     };
   }
 
   enable() {
     this.ensureBaseDir();
-    const settings = this.readJson(this.settingsPath, {});
-    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
-      throw new Error('Antigravity settings.json geçerli bir JSON nesnesi değil.');
-    }
-
+    const settings = this.readSettingsStrict();
     const currentStatusLine = settings.statusLine || null;
     const currentCommand = currentStatusLine?.command || '';
     if (this.isOurCommand(currentCommand)) return this.getStatus();
@@ -96,11 +113,8 @@ class AntigravityIntegration {
   }
 
   disable() {
-    const settings = this.readJson(this.settingsPath, {});
+    const settings = this.readSettingsStrict();
     const backup = this.readJson(this.backupPath, null);
-    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
-      throw new Error('Antigravity settings.json geçerli bir JSON nesnesi değil.');
-    }
 
     if (this.isOurCommand(settings?.statusLine?.command || '')) {
       if (backup?.marker === MARKER && backup.had_status_line) {
