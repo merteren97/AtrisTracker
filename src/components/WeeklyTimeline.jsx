@@ -2,7 +2,11 @@ import React from 'react';
 import { Calendar } from 'lucide-react';
 
 export default function WeeklyTimeline({ weeklyUsagePercent = null, weeklyResetISO }) {
-  const hasUsage = Number.isFinite(Number(weeklyUsagePercent));
+  const hasUsage =
+    weeklyUsagePercent !== null &&
+    weeklyUsagePercent !== undefined &&
+    weeklyUsagePercent !== '' &&
+    Number.isFinite(Number(weeklyUsagePercent));
   const resetDate = weeklyResetISO ? new Date(weeklyResetISO) : null;
   const hasReset = resetDate && !Number.isNaN(resetDate.getTime());
 
