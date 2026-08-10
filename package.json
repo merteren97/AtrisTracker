@@ -10,6 +10,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:backend": "node scripts/backend-smoke-test.js",
+    "prepare:linux-icons": "bash scripts/prepare-linux-icons.sh",
     "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "electron:start": "electron .",
     "electron:build": "vite build && electron-builder"
@@ -62,7 +63,8 @@
         "AppImage",
         "deb"
       ],
-      "icon": "assets/logo.jpg",
+      "icon": "build/icons",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
       "category": "Development"
     },
     "nsis": {
