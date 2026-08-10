@@ -65,7 +65,6 @@ class AntigravityIntegration {
       enabled: this.isOurCommand(command),
       settings_found: fs.existsSync(this.settingsPath),
       last_telemetry_at: lastTelemetryAt,
-      cache_path: this.cachePath,
     };
   }
 
@@ -124,13 +123,13 @@ class AntigravityIntegration {
     if (process.platform === 'win32') {
       const escapedCache = this.cachePath.replace(/'/g, "''");
       const escapedPrevious = String(previousCommand || '').replace(/'/g, "''");
-      const script = `# ${MARKER}\n$ErrorActionPreference = 'SilentlyContinue'\n$payload = [Console]::In.ReadToEnd()\n$cachePath = '${escapedCache}'\n$tempPath = "$cachePath.tmp-$PID"\n[System.IO.File]::WriteAllText($tempPath, $payload, [System.Text.UTF8Encoding]::new($false))\nMove-Item -Force $tempPath $cachePath\n$previous = '${escapedPrevious}'\nif ($previous) {\n  $payload | & cmd.exe /d /s /c $previous\n} else {\n  Write-Output 'AtrisTracker telemetry aktif'\n}\n`;
+      const script = `# ${MARKER}\n$ErrorActionPreference = 'SilentlyContinue'\n$payload = [Console]::In.ReadToEnd()\n$cachePath = '${escapedCache}'\n$tempPath = $cachePath + '.tmp-' + $PID\n[System.IO.File]::WriteAllText($tempPath, $payload, [System.Text.UTF8Encoding]::new($false))\nMove-Item -Force $tempPath $cachePath\n$previous = '${escapedPrevious}'\nif ($previous) {\n  $payload | & cmd.exe /d /s /c $previous\n} else {\n  Write-Output 'AtrisTracker telemetry aktif'\n}\n`;
       fs.writeFileSync(this.scriptPath, script, 'utf8');
       return;
     }
 
     const shellQuote = (value) => `'${String(value).replace(/'/g, `'"'"'`)}'`;
-    const script = `#!/bin/sh\n# ${MARKER}\nCACHE=${shellQuote(this.cachePath)}\nPREVIOUS=${shellQuote(previousCommand || '')}\nTMP="${this.cachePath}.tmp-$$"\ncat > "$TMP"\nmv "$TMP" "$CACHE"\nif [ -n "$PREVIOUS" ]; then\n  cat "$CACHE" | sh -c "$PREVIOUS"\nelse\n  printf '%s\\n' 'AtrisTracker telemetry aktif'\nfi\n`;
+    const script = `#!/bin/sh\n# ${MARKER}\nCACHE=${shellQuote(this.cachePath)}\nPREVIOUS=${shellQuote(previousCommand || '')}\nTMP="$CACHE.tmp-$$"\ncat > "$TMP"\nmv "$TMP" "$CACHE"\nif [ -n "$PREVIOUS" ]; then\n  cat "$CACHE" | sh -c "$PREVIOUS"\nelse\n  printf '%s\\n' 'AtrisTracker telemetry aktif'\nfi\n`;
     fs.writeFileSync(this.scriptPath, script, { encoding: 'utf8', mode: 0o755 });
     try {
       fs.chmodSync(this.scriptPath, 0o755);
