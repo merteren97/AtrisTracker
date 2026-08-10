@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import {
+  Activity,
   BellRing,
   CheckCircle2,
   Download,
@@ -9,6 +10,12 @@ import {
 } from 'lucide-react';
 import AntigravityIntegration from './AntigravityIntegration';
 
+const PROVIDERS = [
+  { key: 'antigravity', label: 'Antigravity' },
+  { key: 'codex', label: 'Codex' },
+  { key: 'claude', label: 'Claude' },
+];
+
 export default function SettingsView({
   antigravityStatus,
   integrationBusy,
@@ -17,17 +24,24 @@ export default function SettingsView({
 }) {
   const [startupStatus, setStartupStatus] = useState(null);
   const [updateStatus, setUpdateStatus] = useState(null);
+  const [scanStatus, setScanStatus] = useState(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [openingUpdate, setOpeningUpdate] = useState(false);
+  const [scanningProviders, setScanningProviders] = useState(false);
 
   useEffect(() => {
     if (!window.electronAPI) return undefined;
 
     window.electronAPI.getStartupStatus?.().then(setStartupStatus);
     window.electronAPI.getUpdateStatus?.().then(setUpdateStatus);
-    const unsubscribe = window.electronAPI.onUpdateStatus?.((status) => setUpdateStatus(status));
+    window.electronAPI.getScanStatus?.().then(setScanStatus);
+    const unsubscribeUpdate = window.electronAPI.onUpdateStatus?.((status) => setUpdateStatus(status));
+    const unsubscribeUsage = window.electronAPI.onUsageUpdated?.(() => {
+      window.electronAPI.getScanStatus?.().then(setScanStatus);
+    });
     return () => {
-      if (typeof unsubscribe === 'function') unsubscribe();
+      if (typeof unsubscribeUpdate === 'function') unsubscribeUpdate();
+      if (typeof unsubscribeUsage === 'function') unsubscribeUsage();
     };
   }, []);
 
@@ -55,6 +69,17 @@ export default function SettingsView({
       await window.electronAPI.openUpdate();
     } finally {
       setOpeningUpdate(false);
+    }
+  };
+
+  const refreshDiagnostics = async () => {
+    if (!window.electronAPI?.scanUsage) return;
+    setScanningProviders(true);
+    try {
+      const result = await window.electronAPI.scanUsage();
+      setScanStatus(result);
+    } finally {
+      setScanningProviders(false);
     }
   };
 
@@ -128,6 +153,54 @@ export default function SettingsView({
               </button>
             )}
           </div>
+        </div>
+      </section>
+
+      <section className="p-3 bg-slate-900/60 rounded-xl border border-white/5 backdrop-blur-sm space-y-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div className="p-1.5 rounded-lg bg-slate-950/70">
+              <Activity className="w-3.5 h-3.5 text-emerald-300" />
+            </div>
+            <div>
+              <div className="text-[11px] font-semibold text-slate-200">Veri sağlığı</div>
+              <div className="text-[9px] text-slate-400">Son provider taramasının gerçek kaynağı ve hata nedeni.</div>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={refreshDiagnostics}
+            disabled={scanningProviders}
+            className="p-1.5 rounded-lg border border-white/10 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+            title="Provider taramasını yenile"
+          >
+            <RefreshCw className={`w-3 h-3 ${scanningProviders ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+
+        <div className="space-y-1.5">
+          {PROVIDERS.map(({ key, label }) => {
+            const provider = scanStatus?.[key] || null;
+            const live = provider?.scan_status === 'live';
+            return (
+              <div key={key} className="p-2 rounded-lg bg-slate-950/55 border border-white/5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-semibold text-slate-300">{label}</span>
+                  <span className={`text-[8px] font-semibold ${live ? 'text-emerald-400' : 'text-amber-300'}`}>
+                    {live ? 'Canlı' : 'Veri yok'}
+                  </span>
+                </div>
+                <div className="text-[8px] text-slate-500 font-mono mt-0.5 break-all">
+                  {provider?.source || 'Kaynak henüz belirlenmedi'}
+                </div>
+                {provider?.error && (
+                  <div className="text-[8px] text-amber-300/90 mt-1 leading-relaxed break-words">
+                    {provider.error}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </section>
 
