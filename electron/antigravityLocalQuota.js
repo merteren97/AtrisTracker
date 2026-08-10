@@ -10,24 +10,19 @@ class AntigravityLocalQuotaProbe {
     this.execFileSync = options.execFileSync || execFileSync;
     this.http = options.http || http;
     this.https = options.https || https;
-    this.timeoutMs = options.timeoutMs || 2500;
+    this.timeoutMs = options.timeoutMs || 3000;
   }
 
   async fetch() {
-    const pids = this.findCliProcessIds();
+    const pids = this.findQuotaServiceProcessIds();
     if (!pids.length) return null;
-
     const ports = this.findListeningPorts(pids);
     if (!ports.length) return null;
-
-    const attempts = await Promise.allSettled(
-      ports.map((port) => this.fetchFromPort(port))
-    );
+    const attempts = await Promise.allSettled(ports.map((port) => this.fetchFromPort(port)));
     const candidates = attempts
       .filter((result) => result.status === 'fulfilled' && result.value)
       .map((result) => result.value)
       .sort((left, right) => this.completeness(right) - this.completeness(left));
-
     return candidates[0] || null;
   }
 
@@ -35,41 +30,36 @@ class AntigravityLocalQuotaProbe {
     return Number(Boolean(value?.fiveHour)) + Number(Boolean(value?.weekly));
   }
 
-  findCliProcessIds() {
+  findQuotaServiceProcessIds() {
     try {
       if (this.platform === 'win32') {
         const command = [
           "$ErrorActionPreference = 'SilentlyContinue'",
           'Get-CimInstance Win32_Process |',
           'Where-Object {',
-          "  $name = [string]$_.Name; $cmd = ([string]$_.CommandLine).ToLowerInvariant();",
-          "  $name -ieq 'agy.exe' -or $name -ieq 'antigravity-cli.exe' -or $name -ieq 'antigravity_cli.exe' -or",
-          "  $cmd -match '[\\\\/](antigravity-cli|antigravity_cli)[\\\\/]' -or",
-          "  $cmd -match '[\\\\/]agy(?:\\.exe)?(?:\\s|$)'",
+          "  $name = ([string]$_.Name).ToLowerInvariant(); $cmd = ([string]$_.CommandLine).ToLowerInvariant();",
+          "  $isAgy = $name -eq 'agy.exe' -or $name -eq 'antigravity-cli.exe' -or $name -eq 'antigravity_cli.exe';",
+          "  $isLanguageServer = $name -match '^language_server.*\\.exe$' -and $cmd -match '[\\\\/]\\.gemini[\\\\/]antigravity-cli[\\\\/]';",
+          "  $isAgyPath = $cmd -match '[\\\\/](antigravity-cli|antigravity_cli)[\\\\/]' -or $cmd -match '[\\\\/]agy(?:\\.exe)?(?:\\s|$)';",
+          '  $isAgy -or $isLanguageServer -or $isAgyPath',
           '} | Select-Object ProcessId, Name, CommandLine | ConvertTo-Json -Compress',
         ].join(' ');
-        const output = this.execFileSync(
-          'powershell.exe',
-          ['-NoProfile', '-NonInteractive', '-Command', command],
-          {
-            encoding: 'utf8',
-            windowsHide: true,
-            timeout: 4000,
-            stdio: ['ignore', 'pipe', 'ignore'],
-          }
-        );
+        const output = this.execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
+          encoding: 'utf8', windowsHide: true, timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'],
+        });
         return this.parseWindowsProcessJson(output);
       }
-
       const output = this.execFileSync('ps', ['-ax', '-o', 'pid=,command='], {
-        encoding: 'utf8',
-        timeout: 3000,
-        stdio: ['ignore', 'pipe', 'ignore'],
+        encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'],
       });
       return this.parsePosixProcessList(output);
     } catch {
       return [];
     }
+  }
+
+  findCliProcessIds() {
+    return this.findQuotaServiceProcessIds();
   }
 
   parseWindowsProcessJson(output) {
@@ -78,9 +68,7 @@ class AntigravityLocalQuotaProbe {
     try {
       const parsed = JSON.parse(text.replace(/^\uFEFF/, ''));
       const rows = Array.isArray(parsed) ? parsed : [parsed];
-      return [...new Set(rows
-        .map((row) => Number(row?.ProcessId ?? row?.processId))
-        .filter((pid) => Number.isInteger(pid) && pid > 0))];
+      return [...new Set(rows.map((row) => Number(row?.ProcessId ?? row?.processId)).filter((pid) => Number.isInteger(pid) && pid > 0))];
     } catch {
       return [];
     }
@@ -94,43 +82,39 @@ class AntigravityLocalQuotaProbe {
       const command = match[2].toLowerCase();
       const isAgy = /(^|[\\/])agy(?:\s|$)/.test(command);
       const isAntigravityCli = /(^|[\\/])antigravity[-_]cli(?:[\\/\s]|$)/.test(command);
-      if (isAgy || isAntigravityCli) ids.push(Number(match[1]));
+      const isLanguageServer = /(^|[\\/])language_server[^\\/\s]*/.test(command) && /[\\/]\.gemini[\\/]antigravity-cli[\\/]/.test(command);
+      if (isAgy || isAntigravityCli || isLanguageServer) ids.push(Number(match[1]));
     }
     return [...new Set(ids.filter((pid) => Number.isInteger(pid) && pid > 0))];
   }
 
   findListeningPorts(pids) {
     if (!pids.length) return [];
-    try {
-      if (this.platform === 'win32') {
+    if (this.platform === 'win32') {
+      try {
         const output = this.execFileSync('netstat.exe', ['-ano', '-p', 'tcp'], {
-          encoding: 'utf8',
-          windowsHide: true,
-          timeout: 4000,
-          stdio: ['ignore', 'pipe', 'ignore'],
+          encoding: 'utf8', windowsHide: true, timeout: 4000, stdio: ['ignore', 'pipe', 'ignore'],
         });
         return this.parseWindowsNetstat(output, pids);
+      } catch {
+        return [];
       }
-
-      const ports = [];
-      for (const pid of pids) {
-        let output;
-        try {
-          output = this.execFileSync(
-            'lsof',
-            ['-nP', '-iTCP', '-sTCP:LISTEN', '-a', '-p', String(pid)],
-            {
-              encoding: 'utf8',
-              timeout: 3000,
-              stdio: ['ignore', 'pipe', 'ignore'],
-            }
-          );
-        } catch {
-          continue;
-        }
-        ports.push(...this.parseLsofPorts(output));
-      }
-      return [...new Set(ports)].sort((a, b) => a - b);
+    }
+    const lsofPorts = [];
+    for (const pid of pids) {
+      try {
+        const output = this.execFileSync('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-a', '-p', String(pid)], {
+          encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'],
+        });
+        lsofPorts.push(...this.parseLsofPorts(output));
+      } catch {}
+    }
+    if (lsofPorts.length) return [...new Set(lsofPorts)].sort((a, b) => a - b);
+    try {
+      const output = this.execFileSync('ss', ['-ltnp'], {
+        encoding: 'utf8', timeout: 3000, stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      return this.parseSsPorts(output, pids);
     } catch {
       return [];
     }
@@ -162,58 +146,41 @@ class AntigravityLocalQuotaProbe {
     return ports;
   }
 
-  async fetchFromPort(port) {
-    const summaryPayload = await this.postJson(
-      port,
-      'RetrieveUserQuotaSummary',
-      { forceRefresh: true },
-      this.timeoutMs
-    );
-    const quota = this.parseQuotaSummary(summaryPayload);
-    if (!quota?.fiveHour && !quota?.weekly) {
-      throw new Error('Antigravity quota summary contains no usable Gemini quota buckets');
+  parseSsPorts(output, pids) {
+    const pidSet = new Set(pids.map(Number));
+    const ports = [];
+    for (const line of String(output || '').split(/\r?\n/)) {
+      const pidMatches = [...line.matchAll(/pid=(\d+)/g)].map((match) => Number(match[1]));
+      if (!pidMatches.some((pid) => pidSet.has(pid))) continue;
+      const address = line.trim().split(/\s+/)[3] || '';
+      const match = address.match(/:(\d+)$/);
+      const port = match ? Number(match[1]) : NaN;
+      if (Number.isInteger(port) && port > 0 && port <= 65535) ports.push(port);
     }
+    return [...new Set(ports)].sort((a, b) => a - b);
+  }
 
+  async fetchFromPort(port) {
+    const summaryPayload = await this.postJson(port, 'RetrieveUserQuotaSummary', { forceRefresh: true }, this.timeoutMs);
+    const quota = this.parseQuotaSummary(summaryPayload);
+    if (!quota?.fiveHour && !quota?.weekly) throw new Error('Antigravity quota summary contains no usable Gemini quota buckets');
     let accountEmail = null;
     try {
-      const identityPayload = await this.postJson(
-        port,
-        'GetUserStatus',
-        this.defaultRequestBody(),
-        Math.min(1200, this.timeoutMs)
-      );
+      const identityPayload = await this.postJson(port, 'GetUserStatus', this.defaultRequestBody(), Math.min(1500, this.timeoutMs));
       accountEmail = this.findEmail(identityPayload?.userStatus?.email) || this.findEmail(identityPayload);
-    } catch {
-      // Quota summary is authoritative even when the optional identity call fails.
-    }
-
-    return {
-      ...quota,
-      accountEmail,
-      port,
-      source: 'antigravity-local:RetrieveUserQuotaSummary',
-    };
+    } catch {}
+    return { ...quota, accountEmail, port, source: 'antigravity-local:RetrieveUserQuotaSummary' };
   }
 
   defaultRequestBody() {
-    return {
-      metadata: {
-        ideName: 'antigravity',
-        extensionName: 'antigravity',
-        ideVersion: 'unknown',
-        locale: 'en',
-      },
-    };
+    return { metadata: { ideName: 'antigravity', extensionName: 'antigravity', ideVersion: 'unknown', locale: 'en' } };
   }
 
   async postJson(port, method, body, timeoutMs) {
     let lastError = null;
     for (const scheme of ['https', 'http']) {
-      try {
-        return await this.postJsonWithScheme(scheme, port, method, body, timeoutMs);
-      } catch (error) {
-        lastError = error;
-      }
+      try { return await this.postJsonWithScheme(scheme, port, method, body, timeoutMs); }
+      catch (error) { lastError = error; }
     }
     throw lastError || new Error('Antigravity local quota endpoint unavailable');
   }
@@ -223,44 +190,24 @@ class AntigravityLocalQuotaProbe {
     const transport = scheme === 'http' ? this.http : this.https;
     return new Promise((resolve, reject) => {
       const options = {
-        hostname: '127.0.0.1',
-        port,
-        path: `${SERVICE_PREFIX}${method}`,
-        method: 'POST',
-        agent: false,
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(payload),
-          'Connect-Protocol-Version': '1',
-        },
+        hostname: '127.0.0.1', port, path: `${SERVICE_PREFIX}${method}`, method: 'POST', agent: false,
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload), 'Connect-Protocol-Version': '1' },
       };
       if (scheme === 'https') options.rejectUnauthorized = false;
-
       const request = transport.request(options, (response) => {
         let responseBody = '';
         response.setEncoding('utf8');
         response.on('data', (chunk) => {
           responseBody += chunk;
-          if (responseBody.length > 4 * 1024 * 1024) {
-            request.destroy(new Error('Antigravity local quota response is too large'));
-          }
+          if (responseBody.length > 4 * 1024 * 1024) request.destroy(new Error('Antigravity local quota response is too large'));
         });
         response.on('end', () => {
-          if (response.statusCode !== 200) {
-            reject(new Error(`Antigravity local quota ${scheme.toUpperCase()} HTTP ${response.statusCode}`));
-            return;
-          }
-          try {
-            resolve(JSON.parse(responseBody));
-          } catch {
-            reject(new Error('Antigravity local quota returned invalid JSON'));
-          }
+          if (response.statusCode !== 200) return reject(new Error(`Antigravity local quota ${scheme.toUpperCase()} HTTP ${response.statusCode}`));
+          try { resolve(JSON.parse(responseBody)); }
+          catch { reject(new Error('Antigravity local quota returned invalid JSON')); }
         });
       });
-
-      request.setTimeout(timeoutMs, () => {
-        request.destroy(new Error('Antigravity local quota request timed out'));
-      });
+      request.setTimeout(timeoutMs, () => request.destroy(new Error('Antigravity local quota request timed out')));
       request.on('error', reject);
       request.end(payload);
     });
@@ -271,43 +218,30 @@ class AntigravityLocalQuotaProbe {
     const root = payload.response || payload.summary || payload;
     const groups = Array.isArray(root?.groups) ? root.groups : [];
     const candidates = [];
-
     for (const group of groups) {
       const groupName = String(group?.displayName || group?.display_name || '').trim();
       const buckets = Array.isArray(group?.buckets) ? group.buckets : [];
-      const looksGemini =
-        groupName.toLowerCase().includes('gemini') ||
-        buckets.some((bucket) => String(bucket?.bucketId || bucket?.bucket_id || '').toLowerCase().includes('gemini'));
+      const looksGemini = groupName.toLowerCase().includes('gemini') || buckets.some((bucket) => String(bucket?.bucketId || bucket?.bucket_id || '').toLowerCase().includes('gemini'));
       if (!looksGemini) continue;
-
       for (const bucket of buckets) {
         if (bucket?.disabled === true) continue;
         const bucketId = String(bucket?.bucketId || bucket?.bucket_id || '').trim();
         const displayName = String(bucket?.displayName || bucket?.display_name || '').trim();
-        const context = `${bucketId} ${displayName}`;
-        const kind = this.classifyBucket(context);
+        const kind = this.classifyBucket(`${bucketId} ${displayName}`);
         if (!kind) continue;
-
         const remainingFraction = this.remainingFraction(bucket);
         if (remainingFraction === null) continue;
-        const usedPercent = Math.round(
-          Math.max(0, Math.min(100, (1 - remainingFraction) * 100)) * 10
-        ) / 10;
+        const usedPercent = Math.round(Math.max(0, Math.min(100, (1 - remainingFraction) * 100)) * 10) / 10;
         const resetAt = this.normalizeReset(bucket?.resetTime ?? bucket?.reset_time ?? null);
         candidates.push({ kind, usedPercent, resetAt, bucketId, displayName });
       }
     }
-
     const select = (kind) => {
       const matches = candidates.filter((candidate) => candidate.kind === kind);
       if (!matches.length) return null;
       return matches.sort((left, right) => right.usedPercent - left.usedPercent)[0];
     };
-
-    return {
-      fiveHour: select('5h'),
-      weekly: select('weekly'),
-    };
+    return { fiveHour: select('5h'), weekly: select('weekly') };
   }
 
   classifyBucket(value) {
@@ -318,13 +252,7 @@ class AntigravityLocalQuotaProbe {
   }
 
   remainingFraction(bucket) {
-    const values = [
-      bucket?.remainingFraction,
-      bucket?.remaining_fraction,
-      bucket?.remaining?.remainingFraction,
-      bucket?.remaining?.remaining_fraction,
-      bucket?.remaining?.case === 'remainingFraction' ? bucket?.remaining?.value : null,
-    ];
+    const values = [bucket?.remainingFraction, bucket?.remaining_fraction, bucket?.remaining?.remainingFraction, bucket?.remaining?.remaining_fraction, bucket?.remaining?.case === 'remainingFraction' ? bucket?.remaining?.value : null];
     for (const value of values) {
       if (value === null || value === undefined || value === '') continue;
       const number = Number(value);
@@ -339,9 +267,7 @@ class AntigravityLocalQuotaProbe {
     if (typeof value === 'number' || /^\d+(\.\d+)?$/.test(String(value))) {
       const number = Number(value);
       date = new Date(number > 10_000_000_000 ? number : number * 1000);
-    } else {
-      date = new Date(value);
-    }
+    } else date = new Date(value);
     return Number.isNaN(date.getTime()) ? null : date.toISOString();
   }
 
