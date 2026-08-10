@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   getLatestUsage: (tool) => ipcRenderer.invoke('get-latest-usage', tool),
   scanUsage: () => ipcRenderer.invoke('scan-usage'),
+  getScanStatus: () => ipcRenderer.invoke('get-scan-status'),
   getUsageHistory: (tool, limit) => ipcRenderer.invoke('get-usage-history', tool, limit),
   getActiveAccounts: () => ipcRenderer.invoke('get-active-accounts'),
 
