@@ -115,8 +115,8 @@ jobs:
 
       - name: Verify Linux artifacts
         run: |
-          APPIMAGE='release-smoke/AtrisTracker-9.9.9-x64.AppImage'
-          DEB='release-smoke/AtrisTracker-9.9.9-x64.deb'
+          APPIMAGE='release-smoke/AtrisTracker-9.9.9-x86_64.AppImage'
+          DEB='release-smoke/AtrisTracker-9.9.9-amd64.deb'
 
           test -s "$APPIMAGE" || { echo "Missing AppImage: $APPIMAGE"; exit 1; }
           test -s "$DEB" || { echo "Missing Debian package: $DEB"; exit 1; }
