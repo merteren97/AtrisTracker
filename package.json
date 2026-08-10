@@ -9,7 +9,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test:backend": "node scripts/backend-smoke-test.js",
+    "test:backend": "node scripts/backend-smoke-test.js && node scripts/provider-probes-smoke-test.js",
     "prepare:linux-icons": "bash scripts/prepare-linux-icons.sh",
     "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "electron:start": "electron .",
