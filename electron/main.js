@@ -3,11 +3,13 @@ const path = require('path');
 const fs = require('fs');
 const UsageDatabase = require('./db');
 const CLIScanner = require('./cliScanner');
+const AntigravityIntegration = require('./antigravityIntegration');
 
 let mainWindow = null;
 let tray = null;
 let db = null;
 let scanner = null;
+let antigravityIntegration = null;
 let pollingInterval = null;
 let alwaysOnTopState = true;
 
@@ -58,17 +60,14 @@ function createTray() {
     ? nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 })
     : nativeImage.createFromBuffer(
         Buffer.from(
-          'iVBORw0KGgoAAAANSU5EUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAuSURBVHgB7cxBEAMACAIwzV/1b2sF9iABtTzZpA4sAR4eHh4eHh4eHh4eHh5+wwM7uQNq1mJz3AAAAABJRU5ErkJggg==',
+          'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAuSURBVHgB7cxBEAMACAIwzV/1b2sF9iABtTzZpA4sAR4eHh4eHh4eHh4eHh5+wwM7uQNq1mJz3AAAAABJRU5ErkJggg==',
           'base64'
         )
       );
 
   tray = new Tray(icon);
   const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'AtrisTracker',
-      enabled: false,
-    },
+    { label: 'AtrisTracker', enabled: false },
     { type: 'separator' },
     {
       label: 'Yenile / Tara',
@@ -91,6 +90,7 @@ function createTray() {
     {
       label: 'Göster / Gizle',
       click: () => {
+        if (!mainWindow) return;
         if (mainWindow.isVisible()) {
           mainWindow.hide();
         } else {
@@ -113,32 +113,27 @@ function createTray() {
   tray.setContextMenu(contextMenu);
 
   tray.on('click', () => {
-    if (mainWindow) {
-      if (mainWindow.isVisible()) {
-        mainWindow.hide();
-      } else {
-        mainWindow.show();
-        mainWindow.focus();
-      }
+    if (!mainWindow) return;
+    if (mainWindow.isVisible()) {
+      mainWindow.hide();
+    } else {
+      mainWindow.show();
+      mainWindow.focus();
     }
   });
 }
 
-// App Initialization
 app.whenReady().then(async () => {
   const dbPath = path.join(app.getPath('userData'), 'ai_usage_tracker.db');
   db = new UsageDatabase(dbPath);
   await db.init();
   scanner = new CLIScanner(db);
+  antigravityIntegration = new AntigravityIntegration();
 
-  // Initial Scan
   await scanner.scanAll();
-
-  // Create Window & Tray
   createWindow();
   createTray();
 
-  // Background Polling (Every 2 Minutes)
   pollingInterval = setInterval(async () => {
     await scanner.scanAll();
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -151,15 +146,13 @@ app.whenReady().then(async () => {
   });
 });
 
-// IPC Communication Handlers
 ipcMain.handle('get-latest-usage', (event, tool) => {
   return db ? db.getLatestSnapshot(tool) : null;
 });
 
 ipcMain.handle('scan-usage', async () => {
   if (!scanner) return null;
-  const results = await scanner.scanAll();
-  return results;
+  return scanner.scanAll();
 });
 
 ipcMain.handle('get-usage-history', (event, tool, limit) => {
@@ -182,6 +175,21 @@ ipcMain.handle('get-usage-history-by-account', (event, tool, email, limit) => {
   return db ? db.getUsageHistoryByAccount(tool, email, limit) : [];
 });
 
+ipcMain.handle('get-antigravity-integration-status', () => {
+  return antigravityIntegration ? antigravityIntegration.getStatus() : null;
+});
+
+ipcMain.handle('enable-antigravity-integration', async () => {
+  if (!antigravityIntegration) return null;
+  const status = antigravityIntegration.enable();
+  if (scanner) await scanner.scanAll();
+  return status;
+});
+
+ipcMain.handle('disable-antigravity-integration', () => {
+  return antigravityIntegration ? antigravityIntegration.disable() : null;
+});
+
 ipcMain.handle('toggle-always-on-top', () => {
   if (mainWindow) {
     alwaysOnTopState = !alwaysOnTopState;
@@ -191,16 +199,14 @@ ipcMain.handle('toggle-always-on-top', () => {
   return false;
 });
 
-ipcMain.handle('is-always-on-top', () => {
-  return alwaysOnTopState;
-});
+ipcMain.handle('is-always-on-top', () => alwaysOnTopState);
 
 ipcMain.on('window-minimize', () => {
   if (mainWindow) mainWindow.minimize();
 });
 
 ipcMain.on('window-close', () => {
-  if (mainWindow) mainWindow.hide(); // Hide to tray on close
+  if (mainWindow) mainWindow.hide();
 });
 
 app.on('window-all-closed', () => {

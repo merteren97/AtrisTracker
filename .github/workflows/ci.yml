@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches:
+      - agent/reliable-usage-backend
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # The repository lockfile is currently out of sync with package.json
+      # (for example electron-builder is missing from package-lock.json).
+      # Use npm install here so the backend/build checks can still run; the
+      # lockfile mismatch is tracked separately from this quota backend fix.
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Backend smoke test
+        run: npm run test:backend
+
+      - name: Build renderer
+        run: npm run build

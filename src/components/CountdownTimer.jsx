@@ -1,25 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, RefreshCw } from 'lucide-react';
+import { Clock } from 'lucide-react';
+
+const EMPTY_TIME = { hours: 0, minutes: 0, seconds: 0, totalSeconds: 0 };
 
 export default function CountdownTimer({ resetTimeISO, title = '5 Saatlik Limit Sıfırlanması' }) {
-  const [timeLeft, setTimeLeft] = useState({ hours: 0, minutes: 0, seconds: 0, totalSeconds: 0 });
+  const [timeLeft, setTimeLeft] = useState(EMPTY_TIME);
+  const targetMs = resetTimeISO ? new Date(resetTimeISO).getTime() : NaN;
+  const hasReset = Number.isFinite(targetMs);
 
   useEffect(() => {
-    if (!resetTimeISO) return;
+    if (!hasReset) {
+      setTimeLeft(EMPTY_TIME);
+      return undefined;
+    }
 
     const updateTimer = () => {
-      const target = new Date(resetTimeISO).getTime();
-      const now = new Date().getTime();
-      const diff = Math.max(0, target - now);
-
-      const hours = Math.floor(diff / (1000 * 60 * 60));
-      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-
+      const diff = Math.max(0, targetMs - Date.now());
       setTimeLeft({
-        hours,
-        minutes,
-        seconds,
+        hours: Math.floor(diff / (1000 * 60 * 60)),
+        minutes: Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)),
+        seconds: Math.floor((diff % (1000 * 60)) / 1000),
         totalSeconds: Math.floor(diff / 1000),
       });
     };
@@ -27,14 +27,12 @@ export default function CountdownTimer({ resetTimeISO, title = '5 Saatlik Limit 
     updateTimer();
     const interval = setInterval(updateTimer, 1000);
     return () => clearInterval(interval);
-  }, [resetTimeISO]);
+  }, [hasReset, targetMs]);
 
-  // Calculate elapsed percentage in 5h (18000 seconds)
   const totalWindowSeconds = 5 * 60 * 60;
-  const elapsedPercent = Math.min(
-    100,
-    Math.max(0, ((totalWindowSeconds - timeLeft.totalSeconds) / totalWindowSeconds) * 100)
-  );
+  const elapsedPercent = hasReset
+    ? Math.min(100, Math.max(0, ((totalWindowSeconds - timeLeft.totalSeconds) / totalWindowSeconds) * 100))
+    : 0;
 
   const formatTwoDigits = (num) => String(num).padStart(2, '0');
 
@@ -46,35 +44,33 @@ export default function CountdownTimer({ resetTimeISO, title = '5 Saatlik Limit 
           <span>{title}</span>
         </div>
         <span className="text-[10px] text-cyan-400/80 font-mono font-medium">
-          %{Math.round(elapsedPercent)} Tamamlandı
+          {hasReset ? `%${Math.round(elapsedPercent)} Tamamlandı` : 'Reset bilgisi yok'}
         </span>
       </div>
 
-      {/* Countdown Digital Display */}
       <div className="flex items-center justify-center space-x-2 py-1.5 bg-slate-950/70 rounded-lg border border-white/5 font-mono">
-        <div className="flex flex-col items-center">
-          <span className="text-lg font-bold text-white leading-none">
-            {formatTwoDigits(timeLeft.hours)}
-          </span>
-          <span className="text-[8px] text-slate-400 uppercase mt-0.5">Saat</span>
-        </div>
-        <span className="text-slate-500 font-bold text-lg">:</span>
-        <div className="flex flex-col items-center">
-          <span className="text-lg font-bold text-white leading-none">
-            {formatTwoDigits(timeLeft.minutes)}
-          </span>
-          <span className="text-[8px] text-slate-400 uppercase mt-0.5">Dak</span>
-        </div>
-        <span className="text-slate-500 font-bold text-lg">:</span>
-        <div className="flex flex-col items-center">
-          <span className="text-lg font-bold text-cyan-400 leading-none">
-            {formatTwoDigits(timeLeft.seconds)}
-          </span>
-          <span className="text-[8px] text-slate-400 uppercase mt-0.5">San</span>
-        </div>
+        {hasReset ? (
+          <>
+            <div className="flex flex-col items-center">
+              <span className="text-lg font-bold text-white leading-none">{formatTwoDigits(timeLeft.hours)}</span>
+              <span className="text-[8px] text-slate-400 uppercase mt-0.5">Saat</span>
+            </div>
+            <span className="text-slate-500 font-bold text-lg">:</span>
+            <div className="flex flex-col items-center">
+              <span className="text-lg font-bold text-white leading-none">{formatTwoDigits(timeLeft.minutes)}</span>
+              <span className="text-[8px] text-slate-400 uppercase mt-0.5">Dak</span>
+            </div>
+            <span className="text-slate-500 font-bold text-lg">:</span>
+            <div className="flex flex-col items-center">
+              <span className="text-lg font-bold text-cyan-400 leading-none">{formatTwoDigits(timeLeft.seconds)}</span>
+              <span className="text-[8px] text-slate-400 uppercase mt-0.5">San</span>
+            </div>
+          </>
+        ) : (
+          <span className="text-sm font-semibold text-slate-400 py-1">— : — : —</span>
+        )}
       </div>
 
-      {/* Progress Bar */}
       <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden p-0.5 border border-white/5">
         <div
           className="h-full bg-gradient-to-r from-cyan-500 to-blue-500 rounded-full transition-all duration-500"
