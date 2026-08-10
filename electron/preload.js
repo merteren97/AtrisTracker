@@ -5,11 +5,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   scanUsage: () => ipcRenderer.invoke('scan-usage'),
   getUsageHistory: (tool, limit) => ipcRenderer.invoke('get-usage-history', tool, limit),
   getActiveAccounts: () => ipcRenderer.invoke('get-active-accounts'),
-  
+
   // Multi-Account API
   getAccountsByTool: (tool) => ipcRenderer.invoke('get-accounts-by-tool', tool),
   getSnapshotByAccount: (tool, email) => ipcRenderer.invoke('get-snapshot-by-account', tool, email),
-  getUsageHistoryByAccount: (tool, email, limit) => ipcRenderer.invoke('get-usage-history-by-account', tool, email, limit),
+  getUsageHistoryByAccount: (tool, email, limit) =>
+    ipcRenderer.invoke('get-usage-history-by-account', tool, email, limit),
+  onUsageUpdated: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = () => callback();
+    ipcRenderer.on('usage-updated', listener);
+    return () => ipcRenderer.removeListener('usage-updated', listener);
+  },
 
   // Window Controls
   minimizeWindow: () => ipcRenderer.send('window-minimize'),
