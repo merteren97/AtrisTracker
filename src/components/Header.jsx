@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { RotateCw, Pin, PinOff, Minus, X } from 'lucide-react';
+import { RotateCw, Pin, PinOff, Minus, X, Settings } from 'lucide-react';
 import packageInfo from '../../package.json';
 
-export default function Header({ onRefresh, isScanning }) {
+export default function Header({ onRefresh, isScanning, onOpenSettings, settingsActive = false }) {
   const [isAlwaysOnTop, setIsAlwaysOnTop] = useState(true);
 
   useEffect(() => {
@@ -45,6 +45,18 @@ export default function Header({ onRefresh, isScanning }) {
       </div>
 
       <div className="app-no-drag flex items-center space-x-1">
+        <button
+          onClick={onOpenSettings}
+          title="Ayarlar"
+          className={`p-1.5 rounded-lg transition-colors ${
+            settingsActive
+              ? 'text-cyan-400 bg-cyan-950/40 border border-cyan-500/30'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800/80'
+          }`}
+        >
+          <Settings className="w-3.5 h-3.5" />
+        </button>
+
         <button
           onClick={onRefresh}
           disabled={isScanning}
