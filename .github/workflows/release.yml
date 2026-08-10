@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g. v1.0.2)'
+        description: 'Release version (e.g. v1.0.2 or 1.0.2)'
         required: true
       draft:
         description: 'Create Draft Release'
@@ -39,7 +39,12 @@ jobs:
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG_NAME="${{ github.event.inputs.version }}"
+            RAW_VERSION="${{ github.event.inputs.version }}"
+            if [[ "$RAW_VERSION" == v* ]]; then
+              TAG_NAME="$RAW_VERSION"
+            else
+              TAG_NAME="v$RAW_VERSION"
+            fi
           else
             TAG_NAME="${GITHUB_REF#refs/tags/}"
           fi
