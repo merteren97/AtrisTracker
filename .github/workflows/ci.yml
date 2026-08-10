@@ -79,3 +79,47 @@ jobs:
 
           Write-Host "Verified $installer"
           Write-Host "Verified $portable"
+
+  linux-package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Simulate release version
+        run: npm version 9.9.9 --no-git-tag-version --allow-same-version
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Install Linux icon tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends imagemagick
+
+      - name: Prepare Linux PNG icon set
+        run: npm run prepare:linux-icons
+
+      - name: Build renderer
+        run: npm run build
+
+      - name: Build Linux AppImage and Debian package
+        run: npx electron-builder --linux --publish never --config.directories.output=release-smoke
+
+      - name: Verify Linux artifacts
+        run: |
+          APPIMAGE='release-smoke/AtrisTracker-9.9.9-x86_64.AppImage'
+          DEB='release-smoke/AtrisTracker-9.9.9-amd64.deb'
+
+          test -s "$APPIMAGE" || { echo "Missing AppImage: $APPIMAGE"; exit 1; }
+          test -s "$DEB" || { echo "Missing Debian package: $DEB"; exit 1; }
+
+          echo "Verified $APPIMAGE"
+          echo "Verified $DEB"

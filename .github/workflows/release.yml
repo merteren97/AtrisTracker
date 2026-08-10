@@ -70,20 +70,48 @@ jobs:
       - name: Install Dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Install Linux Icon Tooling
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends imagemagick
+
+      - name: Prepare Linux PNG Icon Set
+        if: matrix.os == 'ubuntu-latest'
+        run: npm run prepare:linux-icons
+
       - name: Build Web Assets (Vite)
         run: npm run build
 
       - name: Build Windows Installer and Portable Binary
         if: matrix.os == 'windows-latest'
-        run: npx electron-builder --win --config.directories.output=release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --publish never --config.directories.output=release
+
+      - name: Verify Windows Artifacts
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $installer = 'release/AtrisTracker-Setup-${{ steps.release.outputs.version }}.exe'
+          $portable = 'release/AtrisTracker-Portable-${{ steps.release.outputs.version }}.exe'
+
+          if (-not (Test-Path $installer)) { throw "Missing installer artifact: $installer" }
+          if (-not (Test-Path $portable)) { throw "Missing portable artifact: $portable" }
 
       - name: Build Linux Packages
         if: matrix.os == 'ubuntu-latest'
-        run: npx electron-builder --linux --config.directories.output=release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --linux --publish never --config.directories.output=release
+
+      - name: Verify Linux Artifacts
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          APPIMAGE="release/AtrisTracker-${{ steps.release.outputs.version }}-x86_64.AppImage"
+          DEB="release/AtrisTracker-${{ steps.release.outputs.version }}-amd64.deb"
+
+          test -s "$APPIMAGE" || { echo "Missing AppImage: $APPIMAGE"; exit 1; }
+          test -s "$DEB" || { echo "Missing Debian package: $DEB"; exit 1; }
+
+          echo "Verified $APPIMAGE"
+          echo "Verified $DEB"
 
       - name: Upload Artifacts to GitHub Release
         uses: softprops/action-gh-release@v2
