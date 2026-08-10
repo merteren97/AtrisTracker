@@ -1,6 +1,6 @@
 {
   "name": "atris-tracker",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "AtrisTracker - Professional Frameless Desktop Overlay to track AI CLI usage (Antigravity CLI, Codex CLI, Claude Code)",
   "main": "electron/main.js",
   "author": "Antigravity",
@@ -54,7 +54,8 @@
         "nsis",
         "portable"
       ],
-      "icon": "assets/logo.jpg"
+      "icon": "assets/logo.jpg",
+      "artifactName": "${productName}-Portable-${version}.${ext}"
     },
     "linux": {
       "target": [
@@ -65,12 +66,9 @@
       "category": "Development"
     },
     "nsis": {
+      "artifactName": "${productName}-Setup-${version}.${ext}",
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "artifactName": "AtrisTracker-Setup-${version}.${ext}"
-    },
-    "portable": {
-      "artifactName": "AtrisTracker-Portable-${version}.${ext}"
+      "allowToChangeInstallationDirectory": true
     }
   }
 }
