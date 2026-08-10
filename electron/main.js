@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage } = require('electr
 const path = require('path');
 const fs = require('fs');
 const UsageDatabase = require('./db');
-const CLIScanner = require('./cliScanner');
+const CLIScanner = require('./cliScannerEnhanced');
 const AntigravityIntegration = require('./antigravityIntegration');
 const StartupManager = require('./startup');
 
@@ -160,6 +160,16 @@ app.whenReady().then(async () => {
   scanner = new CLIScanner(db);
   antigravityIntegration = new AntigravityIntegration();
   startupManager = new StartupManager(app);
+
+  // v1.0.1 wrote a Windows statusLine command using `-File "..."`. Antigravity
+  // preserves those quotes as part of the -File argument, so repair that legacy
+  // integration automatically before the first quota scan. A genuine malformed
+  // user settings file is never overwritten here.
+  try {
+    antigravityIntegration.repairIfNeeded();
+  } catch (error) {
+    console.warn('Antigravity telemetry bridge repair skipped:', error.message);
+  }
 
   await scanner.scanAll();
   createWindow();
