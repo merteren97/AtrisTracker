@@ -37,6 +37,8 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npm run test:backend
       - run: npm run build
+      - name: Prepare supported Windows icon
+        run: npm run prepare:windows-icon
       - name: Build Windows NSIS installer
         run: npx electron-builder --win nsis --publish never --config.directories.output=release-smoke
       - name: Verify installer and updater metadata
