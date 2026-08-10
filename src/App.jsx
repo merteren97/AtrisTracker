@@ -1,14 +1,16 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { CircleAlert } from 'lucide-react';
 import Header from './components/Header';
 import NavigationTabs from './components/NavigationTabs';
 import AccountSelector from './components/AccountSelector';
-import AntigravityIntegration from './components/AntigravityIntegration';
 import RadialProgress from './components/RadialProgress';
 import CountdownTimer from './components/CountdownTimer';
-import AccountCard from './components/AccountCard';
 import WeeklyTimeline from './components/WeeklyTimeline';
 import HistoryChart from './components/HistoryChart';
 import OverviewView from './components/OverviewView';
+import SettingsView from './components/SettingsView';
+
+const TOOL_TABS = ['antigravity', 'codex', 'claudecode'];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('antigravity');
@@ -55,7 +57,8 @@ export default function App() {
         claudecode: claudeAccounts || [],
       });
 
-      const currentToolKey = activeTab === 'overview' ? 'antigravity' : activeTab;
+      const isToolTab = TOOL_TABS.includes(activeTab);
+      const currentToolKey = isToolTab ? activeTab : 'antigravity';
       const toolAccounts =
         currentToolKey === 'antigravity'
           ? agAccounts
@@ -87,13 +90,15 @@ export default function App() {
         claude: claudeSnapshot,
       });
 
-      if (activeTab !== 'overview') {
+      if (isToolTab) {
         const history = await window.electronAPI.getUsageHistoryByAccount(
           currentToolKey,
           selectedEmail,
           15
         );
         setHistoryData(history || []);
+      } else {
+        setHistoryData([]);
       }
     } else {
       const now = new Date();
@@ -133,7 +138,7 @@ export default function App() {
   }, [activeTab, selectedAccounts]);
 
   const handleSelectAccount = (email) => {
-    if (activeTab !== 'overview') {
+    if (TOOL_TABS.includes(activeTab)) {
       setSelectedAccounts((previous) => ({ ...previous, [activeTab]: email }));
     }
   };
@@ -197,56 +202,76 @@ export default function App() {
   const selectedEmail =
     selectedAccounts[activeTab] || currentData?.account_email || currentAccounts[0]?.email;
 
+  const emptyHint =
+    activeTab === 'antigravity'
+      ? 'Ayarlar içinden Antigravity telemetry yedeğini etkinleştirip Antigravity CLI’da bir işlem yaptıktan sonra yenile.'
+      : activeTab === 'codex'
+      ? 'Codex CLI güncel ve giriş yapılmış olmalı. AtrisTracker önce app-server rate limit kaynağını, gerekirse eski session kaydını dener.'
+      : 'Claude Code OAuth oturumunun aktif olduğundan emin ol. AtrisTracker ortam değişkeni, config dizini ve macOS Keychain kimlik bilgilerini kontrol eder.';
+
   return (
     <div className="w-full h-screen bg-slate-950/85 text-slate-100 flex flex-col border border-white/10 rounded-xl overflow-hidden glass-panel shadow-2xl">
-      <Header onRefresh={handleManualScan} isScanning={isScanning} />
+      <Header
+        onRefresh={handleManualScan}
+        isScanning={isScanning}
+        onOpenSettings={() => setActiveTab('settings')}
+        settingsActive={activeTab === 'settings'}
+      />
       <NavigationTabs activeTab={activeTab} setActiveTab={setActiveTab} />
 
       <main className="flex-1 overflow-y-auto px-3 pb-3 space-y-3 custom-scrollbar">
-        {activeTab === 'overview' ? (
+        {activeTab === 'settings' ? (
+          <SettingsView
+            antigravityStatus={antigravityIntegration}
+            integrationBusy={integrationBusy}
+            onEnableAntigravity={() => handleIntegrationChange(true)}
+            onDisableAntigravity={() => handleIntegrationChange(false)}
+          />
+        ) : activeTab === 'overview' ? (
           <OverviewView usageData={usageData} />
         ) : (
           <>
-            {activeTab === 'antigravity' && (
-              <AntigravityIntegration
-                status={antigravityIntegration}
-                busy={integrationBusy}
-                onEnable={() => handleIntegrationChange(true)}
-                onDisable={() => handleIntegrationChange(false)}
-              />
-            )}
-
             <AccountSelector
               accounts={currentAccounts}
               selectedAccountEmail={selectedEmail}
               onSelectAccount={handleSelectAccount}
-              toolTitle={currentToolTitle}
+              lastSync={currentData?.timestamp}
             />
 
-            <AccountCard
-              email={currentData?.account_email || selectedEmail || 'Bilinmiyor'}
-              toolName={currentToolTitle}
-              lastLogin={currentData?.timestamp}
-            />
+            {currentData ? (
+              <>
+                <RadialProgress
+                  percentage={currentData?.rolling_5h_percent ?? currentData?.usage_percent ?? null}
+                  label={`${currentToolTitle} 5-Saatlik Limit`}
+                />
 
-            <RadialProgress
-              percentage={currentData?.rolling_5h_percent ?? currentData?.usage_percent ?? null}
-              label={`${currentToolTitle} 5-Saatlik Limit`}
-            />
+                <CountdownTimer
+                  resetTimeISO={currentData?.next_5h_reset_at}
+                  title="5-Saatlik Kota Sıfırlaması"
+                />
 
-            <CountdownTimer
-              resetTimeISO={currentData?.next_5h_reset_at}
-              title="5-Saatlik Kota Sıfırlaması"
-            />
+                <WeeklyTimeline
+                  weeklyUsagePercent={
+                    currentData?.weekly_usage_percent ?? currentData?.weekly_usage_count ?? null
+                  }
+                  weeklyResetISO={currentData?.weekly_reset_at}
+                />
 
-            <WeeklyTimeline
-              weeklyUsagePercent={
-                currentData?.weekly_usage_percent ?? currentData?.weekly_usage_count ?? null
-              }
-              weeklyResetISO={currentData?.weekly_reset_at}
-            />
-
-            <HistoryChart historyData={historyData} />
+                <HistoryChart historyData={historyData} />
+              </>
+            ) : (
+              <div className="p-3 bg-slate-900/50 rounded-xl border border-dashed border-white/10 flex items-start gap-2.5">
+                <div className="p-1.5 rounded-lg bg-amber-950/30 border border-amber-500/20 shrink-0">
+                  <CircleAlert className="w-3.5 h-3.5 text-amber-300" />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[11px] font-semibold text-slate-200">
+                    {currentAccounts.length ? 'Hesap bulundu, quota verisi bekleniyor' : 'Henüz hesap bulunamadı'}
+                  </div>
+                  <p className="text-[9px] text-slate-400 mt-1 leading-relaxed">{emptyHint}</p>
+                </div>
+              </div>
+            )}
           </>
         )}
       </main>
