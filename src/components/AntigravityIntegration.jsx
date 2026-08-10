@@ -1,10 +1,17 @@
 import React from 'react';
-import { Radio, ShieldCheck, Unplug } from 'lucide-react';
+import { Radio, Unplug } from 'lucide-react';
 
 export default function AntigravityIntegration({ status, busy, onEnable, onDisable }) {
   if (!status) return null;
 
   const enabled = Boolean(status.enabled);
+  const hasTelemetry = Boolean(status.last_telemetry_at);
+  const detail = enabled
+    ? hasTelemetry
+      ? '5h / haftalık değerler resmi statusline telemetry üzerinden okunur.'
+      : 'Bağlantı hazır; Antigravity CLI açıldığında ilk telemetry kaydedilir.'
+    : 'Prompt çalıştırmadan resmi statusline verisini yerelde yakalar.';
+
   return (
     <div className="p-2.5 bg-slate-900/60 rounded-xl border border-white/5 backdrop-blur-sm flex items-center justify-between gap-2">
       <div className="flex items-center gap-2 min-w-0">
@@ -19,11 +26,7 @@ export default function AntigravityIntegration({ status, busy, onEnable, onDisab
           <div className="text-[10px] font-semibold text-slate-200">
             {enabled ? 'Canlı kota bağlantısı aktif' : 'Canlı Antigravity kotasını bağla'}
           </div>
-          <div className="text-[9px] text-slate-400 truncate">
-            {enabled
-              ? '5h / haftalık değerler statusline telemetry üzerinden okunur.'
-              : 'Prompt çalıştırmadan resmi statusline verisini yerelde yakalar.'}
-          </div>
+          <div className="text-[9px] text-slate-400 truncate">{detail}</div>
         </div>
       </div>
 
