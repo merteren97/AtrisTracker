@@ -11,6 +11,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSnapshotByAccount: (tool, email) => ipcRenderer.invoke('get-snapshot-by-account', tool, email),
   getUsageHistoryByAccount: (tool, email, limit) =>
     ipcRenderer.invoke('get-usage-history-by-account', tool, email, limit),
+
+  // Antigravity telemetry integration
+  getAntigravityIntegrationStatus: () =>
+    ipcRenderer.invoke('get-antigravity-integration-status'),
+  enableAntigravityIntegration: () =>
+    ipcRenderer.invoke('enable-antigravity-integration'),
+  disableAntigravityIntegration: () =>
+    ipcRenderer.invoke('disable-antigravity-integration'),
+
   onUsageUpdated: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = () => callback();
