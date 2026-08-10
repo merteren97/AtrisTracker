@@ -51,6 +51,28 @@ jobs:
           $blockmaps = Get-ChildItem release-smoke -Filter '*.blockmap'
           if ($blockmaps.Count -lt 1) { throw 'Missing NSIS blockmap' }
           if ((Get-Item $installer).Length -le 0) { throw 'Installer is empty' }
+      - name: Smoke test NSIS install and uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = (Resolve-Path 'release-smoke/AtrisTracker-Setup-9.9.9.exe').Path
+          $install = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installer exited with $($install.ExitCode)" }
+
+          $programs = Join-Path $env:LOCALAPPDATA 'Programs'
+          $installedExe = Get-ChildItem $programs -Recurse -Filter 'AtrisTracker.exe' -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notlike '*release-smoke*' } |
+            Select-Object -First 1
+          if (-not $installedExe) { throw "AtrisTracker.exe not found under $programs after install" }
+          Write-Host "Installed executable: $($installedExe.FullName)"
+
+          Get-Process AtrisTracker -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          $uninstaller = Get-ChildItem $installedExe.Directory.FullName -Filter 'Uninstall*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $uninstaller) { throw 'NSIS uninstaller was not created' }
+          $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstaller exited with $($uninstall.ExitCode)" }
+          Start-Sleep -Seconds 2
+          if (Test-Path $installedExe.FullName) { throw 'Installed executable still exists after uninstall' }
 
   linux-package:
     runs-on: ubuntu-latest
