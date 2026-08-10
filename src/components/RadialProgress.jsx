@@ -4,20 +4,18 @@ export default function RadialProgress({ percentage = 0, used = 0, limit = 0, la
   const radius = 64;
   const strokeWidth = 10;
   const circumference = 2 * Math.PI * radius;
-  const clampedPercent = Math.min(100, Math.max(0, percentage));
+  const clampedPercent = Math.min(100, Math.max(0, percentage)); // % Used
+  const remainingPercent = Math.max(0, 100 - clampedPercent); // % Remaining
   const strokeDashoffset = circumference - (clampedPercent / 100) * circumference;
 
-  // Determine dynamic gradient color based on percentage
-  let statusColor = 'from-emerald-400 to-cyan-400';
+  // Determine dynamic status based on used percentage
   let badgeText = 'Normal';
   let badgeStyle = 'text-emerald-400 bg-emerald-950/50 border-emerald-500/30';
 
   if (clampedPercent >= 85) {
-    statusColor = 'from-rose-500 to-amber-500';
     badgeText = 'Kritik Limit';
     badgeStyle = 'text-rose-400 bg-rose-950/50 border-rose-500/30';
   } else if (clampedPercent >= 60) {
-    statusColor = 'from-amber-400 to-orange-400';
     badgeText = 'Yüksek Kullanım';
     badgeStyle = 'text-amber-400 bg-amber-950/50 border-amber-500/30';
   }
@@ -67,7 +65,10 @@ export default function RadialProgress({ percentage = 0, used = 0, limit = 0, la
             %{Math.round(clampedPercent)}
           </span>
           <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider mt-0.5">
-            Kullanım
+            Kullanılan
+          </span>
+          <span className="text-[9px] text-cyan-400 font-mono font-semibold mt-0.5">
+            %{Math.round(remainingPercent)} Kalan
           </span>
         </div>
       </div>
@@ -77,10 +78,10 @@ export default function RadialProgress({ percentage = 0, used = 0, limit = 0, la
         <span className={`text-[10px] px-2 py-0.5 rounded-full border font-semibold ${badgeStyle}`}>
           {badgeText}
         </span>
-        <div className="text-xs text-slate-300 font-mono flex items-center space-x-1 mt-1">
-          <span className="font-bold text-white">{used}</span>
-          <span className="text-slate-500">/</span>
-          <span className="text-slate-400">{limit} istek</span>
+        <div className="text-xs text-slate-300 font-mono flex items-center space-x-1.5 mt-1">
+          <span className="text-emerald-400 font-bold">%{Math.round(remainingPercent)} Kalan Kota</span>
+          <span className="text-slate-500">•</span>
+          <span className="text-slate-400 font-medium">%{Math.round(clampedPercent)} Dolu</span>
         </div>
         <span className="text-[10px] text-slate-400">{label}</span>
       </div>

@@ -22,7 +22,7 @@
   <img src="https://img.shields.io/badge/Vite-6.x-646CFF?style=for-the-badge&logo=vite&logoColor=white" alt="Vite"/>
   <img src="https://img.shields.io/badge/Tailwind_CSS-3.x-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white" alt="Tailwind CSS"/>
   <img src="https://img.shields.io/badge/SQLite-sql.js-003B57?style=for-the-badge&logo=sqlite&logoColor=white" alt="SQLite"/>
-  <img src="https://img.shields.io/badge/Lisans-MIT-blue?style=for-the-badge" alt="Lisans"/>
+  <img src="https://img.shields.io/badge/Lisans-Apache_2.0-blue?style=for-the-badge" alt="Lisans"/>
 </p>
 
 ---
@@ -118,4 +118,4 @@ npm run electron:start
 
 ## 📜 Lisans
 
-Bu proje **MIT Lisansı** altında lisanslanmıştır. Detaylar için `LICENSE` dosyasına bakabilirsiniz.
+Bu proje **Apache Lisansı 2.0 (Apache License, Version 2.0)** altında lisanslanmıştır. Detaylar için [`LICENSE`](LICENSE) dosyasına bakabilirsiniz.

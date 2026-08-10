@@ -4,7 +4,7 @@
   "description": "AtrisTracker - Professional Frameless Desktop Overlay to track AI CLI usage (Antigravity CLI, Codex CLI, Claude Code)",
   "main": "electron/main.js",
   "author": "Antigravity",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
