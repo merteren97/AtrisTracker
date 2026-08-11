@@ -5,7 +5,7 @@ on:
     branches: [main]
   push:
     branches:
-      - agent/reliable-usage-backend
+      - agent/telemetry-free-usage-nsis-updater
 
 permissions:
   contents: read
@@ -15,111 +15,84 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
-      # The repository lockfile is currently out of sync with package.json.
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Backend smoke test
-        run: npm run test:backend
-
-      - name: Build renderer
-        run: npm run build
+      - run: npm install --no-audit --no-fund
+      - run: npm run test:backend
+      - run: npm run build
 
   windows-package:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
-      # Mirror the release workflow: change package version before dependency
-      # installation, then verify electron-builder uses that exact version.
-      - name: Simulate release version
-        run: npm version 9.9.9 --no-git-tag-version --allow-same-version
-
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Backend smoke test on Windows
-        run: npm run test:backend
-
-      - name: Build renderer
-        run: npm run build
-
-      - name: Build Windows installer and portable binary
-        run: npx electron-builder --win --publish never --config.directories.output=release-smoke
-
-      - name: Verify Windows artifact names
+      - run: npm version 9.9.9 --no-git-tag-version --allow-same-version
+      - run: npm install --no-audit --no-fund
+      - run: npm run test:backend
+      - run: npm run build
+      - name: Prepare supported Windows icon
+        run: npm run prepare:windows-icon
+      - name: Build Windows NSIS installer
+        run: npx electron-builder --win nsis --publish never --config.directories.output=release-smoke
+      - name: Verify installer and updater metadata
         shell: pwsh
         run: |
           $installer = 'release-smoke/AtrisTracker-Setup-9.9.9.exe'
-          $portable = 'release-smoke/AtrisTracker-Portable-9.9.9.exe'
+          $latest = 'release-smoke/latest.yml'
+          if (-not (Test-Path $installer)) { throw "Missing installer: $installer" }
+          if (-not (Test-Path $latest)) { throw "Missing updater metadata: $latest" }
+          $blockmaps = Get-ChildItem release-smoke -Filter '*.blockmap'
+          if ($blockmaps.Count -lt 1) { throw 'Missing NSIS blockmap' }
+          if ((Get-Item $installer).Length -le 0) { throw 'Installer is empty' }
+      - name: Smoke test NSIS install and uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = (Resolve-Path 'release-smoke/AtrisTracker-Setup-9.9.9.exe').Path
+          $install = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Installer exited with $($install.ExitCode)" }
 
-          if (-not (Test-Path $installer)) {
-            throw "Missing installer artifact: $installer"
-          }
-          if (-not (Test-Path $portable)) {
-            throw "Missing portable artifact: $portable"
-          }
+          $programs = Join-Path $env:LOCALAPPDATA 'Programs'
+          $installedExe = Get-ChildItem $programs -Recurse -Filter 'AtrisTracker.exe' -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notlike '*release-smoke*' } |
+            Select-Object -First 1
+          if (-not $installedExe) { throw "AtrisTracker.exe not found under $programs after install" }
+          Write-Host "Installed executable: $($installedExe.FullName)"
 
-          Write-Host "Verified $installer"
-          Write-Host "Verified $portable"
+          Get-Process AtrisTracker -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          $uninstaller = Get-ChildItem $installedExe.Directory.FullName -Filter 'Uninstall*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $uninstaller) { throw 'NSIS uninstaller was not created' }
+          $uninstall = Start-Process -FilePath $uninstaller.FullName -ArgumentList '/S' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstaller exited with $($uninstall.ExitCode)" }
+          Start-Sleep -Seconds 2
+          if (Test-Path $installedExe.FullName) { throw 'Installed executable still exists after uninstall' }
 
   linux-package:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
-      - name: Simulate release version
-        run: npm version 9.9.9 --no-git-tag-version --allow-same-version
-
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Install Linux icon tooling
-        run: |
+      - run: npm version 9.9.9 --no-git-tag-version --allow-same-version
+      - run: npm install --no-audit --no-fund
+      - run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends imagemagick
-
-      - name: Prepare Linux PNG icon set
-        run: npm run prepare:linux-icons
-
-      - name: Build renderer
-        run: npm run build
-
-      - name: Build Linux AppImage and Debian package
-        run: npx electron-builder --linux --publish never --config.directories.output=release-smoke
-
-      - name: Verify Linux artifacts
+      - run: npm run prepare:linux-icons
+      - run: npm run build
+      - run: npx electron-builder --linux AppImage deb --publish never --config.directories.output=release-smoke
+      - name: Verify Linux artifacts and updater metadata
         run: |
-          APPIMAGE='release-smoke/AtrisTracker-9.9.9-x86_64.AppImage'
-          DEB='release-smoke/AtrisTracker-9.9.9-amd64.deb'
-
-          test -s "$APPIMAGE" || { echo "Missing AppImage: $APPIMAGE"; exit 1; }
-          test -s "$DEB" || { echo "Missing Debian package: $DEB"; exit 1; }
-
-          echo "Verified $APPIMAGE"
-          echo "Verified $DEB"
+          test -s release-smoke/AtrisTracker-9.9.9-x86_64.AppImage
+          test -s release-smoke/AtrisTracker-9.9.9-amd64.deb
+          test -s release-smoke/latest-linux.yml
