@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { CircleAlert } from 'lucide-react';
 import Header from './components/Header';
 import NavigationTabs from './components/NavigationTabs';
@@ -9,6 +9,7 @@ import WeeklyTimeline from './components/WeeklyTimeline';
 import HistoryChart from './components/HistoryChart';
 import OverviewView from './components/OverviewView';
 import SettingsView from './components/SettingsView';
+import ConfirmDialog from './components/ConfirmDialog';
 
 const TOOL_TABS = ['antigravity', 'codex', 'claudecode'];
 
@@ -19,6 +20,12 @@ export default function App() {
   const [selectedAccounts, setSelectedAccounts] = useState({ antigravity: null, codex: null, claudecode: null });
   const [usageData, setUsageData] = useState({ antigravity: null, codex: null, claude: null });
   const [historyData, setHistoryData] = useState([]);
+  // Last known active (currently logged-in) account per tool, so a stale chip
+  // selection never hides a newly switched login's fresh data.
+  const activeAccountsRef = useRef({ antigravity: null, codex: null, claudecode: null });
+  // App-styled confirmation dialog state; resolves to a boolean when answered.
+  const [confirmBox, setConfirmBox] = useState(null);
+  const confirmResolveRef = useRef(null);
 
   const fetchUsageData = useCallback(async () => {
     if (window.electronAPI) {
@@ -33,7 +40,15 @@ export default function App() {
       const currentToolKey = isToolTab ? activeTab : 'antigravity';
       const toolAccounts = currentToolKey === 'antigravity' ? agAccounts : currentToolKey === 'codex' ? codexAccounts : claudeAccounts;
       const activeAcc = toolAccounts.find((account) => account.active === 1) || toolAccounts[0];
-      const selectedEmail = selectedAccounts[currentToolKey] || activeAcc?.email || null;
+      const activeEmail = activeAcc?.email || null;
+      let selectedEmail = selectedAccounts[currentToolKey] || activeEmail;
+      if (activeAccountsRef.current[currentToolKey] && activeAccountsRef.current[currentToolKey] !== activeEmail) {
+        // The logged-in account changed (e.g. switched CLI login); follow it
+        // instead of keeping a stale chip selection from the old account.
+        selectedEmail = activeEmail;
+        setSelectedAccounts((previous) => ({ ...previous, [currentToolKey]: activeEmail }));
+      }
+      activeAccountsRef.current = { ...activeAccountsRef.current, [currentToolKey]: activeEmail };
 
       const [agSnapshot, codexSnapshot, claudeSnapshot] = await Promise.all([
         window.electronAPI.getSnapshotByAccount('antigravity', activeTab === 'antigravity' ? selectedEmail : selectedAccounts.antigravity),
@@ -72,6 +87,43 @@ export default function App() {
     if (TOOL_TABS.includes(activeTab)) setSelectedAccounts((previous) => ({ ...previous, [activeTab]: email }));
   };
 
+  const requestConfirm = useCallback(
+    (options) =>
+      new Promise((resolve) => {
+        confirmResolveRef.current = resolve;
+        setConfirmBox(options);
+      }),
+    []
+  );
+
+  const answerConfirm = useCallback((accepted) => {
+    setConfirmBox(null);
+    const resolve = confirmResolveRef.current;
+    confirmResolveRef.current = null;
+    if (typeof resolve === 'function') resolve(Boolean(accepted));
+  }, []);
+
+  const handleDeleteAccount = async (email) => {
+    if (!TOOL_TABS.includes(activeTab) || !window.electronAPI?.deleteAccount) return;
+    const account = accountsByTool[activeTab]?.find((item) => item.email === email);
+    if (!account || account.active === 1) return; // aktif oturum silinemez
+    const confirmed = await requestConfirm({
+      title: 'Hesap verisini sil',
+      message: `"${email}" hesabının kayıtlı verisi silinsin mi? Bu işlem geri alınamaz.`,
+      confirmLabel: 'Sil',
+      cancelLabel: 'Vazgeç',
+      danger: true,
+    });
+    if (!confirmed) return;
+    const deleted = await window.electronAPI.deleteAccount(activeTab, email);
+    if (deleted) {
+      setSelectedAccounts((previous) =>
+        previous[activeTab] === email ? { ...previous, [activeTab]: null } : previous
+      );
+      await fetchUsageData();
+    }
+  };
+
   const handleManualScan = async () => {
     setIsScanning(true);
     try {
@@ -105,7 +157,7 @@ export default function App() {
       <main className="flex-1 overflow-y-auto px-3 pb-3 space-y-3 custom-scrollbar">
         {activeTab === 'settings' ? <SettingsView /> : activeTab === 'overview' ? <OverviewView usageData={usageData} /> : (
           <>
-            <AccountSelector accounts={currentAccounts} selectedAccountEmail={selectedEmail} onSelectAccount={handleSelectAccount} lastSync={currentData?.timestamp} />
+            <AccountSelector accounts={currentAccounts} selectedAccountEmail={selectedEmail} onSelectAccount={handleSelectAccount} onDeleteAccount={handleDeleteAccount} lastSync={currentData?.timestamp} />
             {currentData ? (
               <>
                 <RadialProgress percentage={currentData?.rolling_5h_percent ?? currentData?.usage_percent ?? null} label={`${currentToolTitle} 5-Saatlik Limit`} />
@@ -125,6 +177,16 @@ export default function App() {
           </>
         )}
       </main>
+      <ConfirmDialog
+        open={Boolean(confirmBox)}
+        title={confirmBox?.title}
+        message={confirmBox?.message}
+        confirmLabel={confirmBox?.confirmLabel}
+        cancelLabel={confirmBox?.cancelLabel}
+        danger={confirmBox?.danger}
+        onConfirm={() => answerConfirm(true)}
+        onCancel={() => answerConfirm(false)}
+      />
     </div>
   );
 }

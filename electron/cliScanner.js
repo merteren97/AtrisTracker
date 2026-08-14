@@ -317,6 +317,7 @@ class CLIScanner {
     const accountFiles = [
       path.join(geminiDir, 'google_accounts.json'),
       path.join(geminiDir, 'antigravity-cli', 'google_accounts.json'),
+      path.join(geminiDir, 'antigravity', 'google_accounts.json'),
     ];
 
     for (const accountFile of accountFiles) {
@@ -328,18 +329,27 @@ class CLIScanner {
       if (found) return found;
     }
 
-    const logDir = path.join(geminiDir, 'antigravity-cli', 'log');
+    const logDirs = [
+      path.join(geminiDir, 'antigravity-cli', 'log'),
+      path.join(geminiDir, 'antigravity-cli'),
+      path.join(geminiDir, 'antigravity', 'log'),
+    ];
+    const logCandidates = [];
+    for (const logDir of logDirs) {
+      try {
+        if (!fs.existsSync(logDir)) continue;
+        for (const entry of fs.readdirSync(logDir)) {
+          if (!entry.endsWith('.log')) continue;
+          const fullPath = path.join(logDir, entry);
+          logCandidates.push({ path: fullPath, mtimeMs: fs.statSync(fullPath).mtimeMs });
+        }
+      } catch {
+        // Ignore unreadable log directories.
+      }
+    }
+    logCandidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
     try {
-      if (!fs.existsSync(logDir)) return null;
-      const files = fs
-        .readdirSync(logDir)
-        .filter((name) => name.endsWith('.log'))
-        .map((name) => ({
-          path: path.join(logDir, name),
-          mtimeMs: fs.statSync(path.join(logDir, name)).mtimeMs,
-        }))
-        .sort((a, b) => b.mtimeMs - a.mtimeMs)
-        .slice(0, 5);
+      const files = logCandidates.slice(0, 5);
 
       const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
       for (const file of files) {

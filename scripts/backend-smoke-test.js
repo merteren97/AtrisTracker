@@ -236,6 +236,60 @@ async function run() {
     // A scan that discovers the new account but has no live quota must not create
     // a fake zero snapshot or overwrite the previous account's cached values.
     assert.equal(db.getUsageHistoryByAccount('antigravity', 'second@example.com').length, 0);
+
+    // Switching the logged-in Codex account: the new account becomes active with
+    // fresh data, the old account keeps its last snapshot and stays viewable.
+    db.addSnapshot({
+      tool: 'codex',
+      account_email: 'old@example.com',
+      weekly_usage_percent: 41,
+      weekly_reset_at: '2026-08-17T00:00:00Z',
+      source: 'codex-app-server:account/rateLimits/read',
+    });
+    db.addSnapshot({
+      tool: 'codex',
+      account_email: 'new@example.com',
+      weekly_usage_percent: 100,
+      weekly_reset_at: '2026-08-20T05:28:22Z',
+      source: 'codex-app-server:account/rateLimits/read',
+    });
+    const codexAccounts = db.getAccountsByTool('codex');
+    assert.equal(codexAccounts.find((account) => account.email === 'new@example.com').active, 1);
+    assert.equal(codexAccounts.find((account) => account.email === 'old@example.com').active, 0);
+    // Default lookup follows the active account; per-account lookup returns the
+    // old account's last snapshot.
+    assert.equal(db.getLatestSnapshot('codex').account_email, 'new@example.com');
+    assert.equal(db.getLatestSnapshot('codex').weekly_usage_percent, 100);
+    assert.equal(
+      db.getLatestSnapshotByAccount('codex', 'old@example.com').weekly_usage_percent,
+      41
+    );
+    assert.equal(db.getLatestSnapshotByAccount('codex', 'old@example.com').weekly_reset_at, '2026-08-17T00:00:00.000Z');
+
+    // Deleting a stored (inactive) account removes its record and history; the
+    // active account is protected so a live session can never be wiped.
+    db.addSnapshot({
+      tool: 'claudecode',
+      account_email: 'old-claude@example.com',
+      rolling_5h_percent: 10,
+      weekly_usage_percent: 20,
+      source: 'test',
+    });
+    db.addSnapshot({
+      tool: 'claudecode',
+      account_email: 'current-claude@example.com',
+      rolling_5h_percent: 5,
+      weekly_usage_percent: 10,
+      source: 'test',
+    });
+    assert.equal(db.deleteAccount('claudecode', 'current-claude@example.com'), false);
+    assert.equal(db.deleteAccount('claudecode', 'old-claude@example.com'), true);
+    assert.deepEqual(
+      db.getAccountsByTool('claudecode').map((account) => account.email),
+      ['current-claude@example.com']
+    );
+    assert.equal(db.getUsageHistoryByAccount('claudecode', 'old-claude@example.com').length, 0);
+    assert.equal(db.deleteAccount('claudecode', 'does-not-exist@example.com'), false);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

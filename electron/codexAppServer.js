@@ -33,9 +33,13 @@ class CodexAppServerQuota {
     return new Promise((resolve, reject) => {
       let child;
       try {
+        // npm-installed Codex only ships a .cmd shim on Windows; Node cannot
+        // CreateProcess a batch file directly, so run it through cmd.exe.
+        const needsShell = this.platform === 'win32' && /\.(cmd|bat)$/i.test(command);
         child = this.spawn(command, ['app-server', '--listen', 'stdio://'], {
           env: this.env,
           windowsHide: true,
+          shell: needsShell,
           stdio: ['pipe', 'pipe', 'pipe'],
         });
       } catch (error) {

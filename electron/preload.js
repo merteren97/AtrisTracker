@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getActiveAccounts: () => ipcRenderer.invoke('get-active-accounts'),
   getAccountsByTool: (tool) => ipcRenderer.invoke('get-accounts-by-tool', tool),
   getSnapshotByAccount: (tool, email) => ipcRenderer.invoke('get-snapshot-by-account', tool, email),
+  deleteAccount: (tool, email) => ipcRenderer.invoke('delete-account', tool, email),
   getUsageHistoryByAccount: (tool, email, limit) => ipcRenderer.invoke('get-usage-history-by-account', tool, email, limit),
   getStartupStatus: () => ipcRenderer.invoke('get-startup-status'),
   setStartupEnabled: (enabled) => ipcRenderer.invoke('set-startup-enabled', Boolean(enabled)),

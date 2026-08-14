@@ -31,6 +31,20 @@ let alwaysOnTopState = true;
 let startHidden = process.argv.includes('--startup');
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
+// Only one instance may run: launching again focuses the existing window
+// instead of opening a second tracker writing to the same database.
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+}
+app.on('second-instance', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
+
 if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
 app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
@@ -143,6 +157,7 @@ function createTray() {
 }
 
 app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return;
   const dbPath = path.join(app.getPath('userData'), 'ai_usage_tracker.db');
   db = new UsageDatabase(dbPath);
   await db.init();
@@ -183,6 +198,7 @@ ipcMain.handle('get-usage-history', (_event, tool, limit) => (db ? db.getUsageHi
 ipcMain.handle('get-active-accounts', () => (db ? db.getActiveAccounts() : []));
 ipcMain.handle('get-accounts-by-tool', (_event, tool) => (db ? db.getAccountsByTool(tool) : []));
 ipcMain.handle('get-snapshot-by-account', (_event, tool, email) => db ? db.getLatestSnapshotByAccount(tool, email) : null);
+ipcMain.handle('delete-account', (_event, tool, email) => (db ? db.deleteAccount(tool, email) : false));
 ipcMain.handle('get-usage-history-by-account', (_event, tool, email, limit) => db ? db.getUsageHistoryByAccount(tool, email, limit) : []);
 ipcMain.handle('get-startup-status', () => startupManager ? startupManager.getStatus() : { supported: false, enabled: false });
 ipcMain.handle('set-startup-enabled', (_event, enabled) => startupManager ? startupManager.setEnabled(Boolean(enabled)) : { supported: false, enabled: false });
