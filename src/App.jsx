@@ -144,6 +144,23 @@ export default function App() {
   const currentToolTitle = activeTab === 'antigravity' ? 'Antigravity CLI' : activeTab === 'codex' ? 'Codex CLI' : activeTab === 'claudecode' ? 'Claude Code' : 'Genel Özet';
   const currentAccounts = accountsByTool[activeTab] || [];
   const selectedEmail = selectedAccounts[activeTab] || currentData?.account_email || currentAccounts[0]?.email;
+  // When the provider has no 5-hour window (e.g. some Codex accounts), promote
+  // the weekly value to the foreground instead of showing an empty gauge.
+  const hasFiveHour =
+    currentData?.rolling_5h_percent != null || currentData?.usage_percent != null;
+  const primaryPercent =
+    currentData?.rolling_5h_percent ??
+    currentData?.usage_percent ??
+    currentData?.weekly_usage_percent ??
+    currentData?.weekly_usage_count ??
+    null;
+  const primaryLabel = hasFiveHour
+    ? `${currentToolTitle} 5-Saatlik Limit`
+    : `${currentToolTitle} Haftalık Limit`;
+  const primaryResetISO = hasFiveHour ? currentData?.next_5h_reset_at : currentData?.weekly_reset_at;
+  const primaryResetTitle = hasFiveHour
+    ? '5-Saatlik Kota Sıfırlaması'
+    : 'Haftalık Kota Sıfırlaması';
   const emptyHint = activeTab === 'antigravity'
     ? 'Antigravity CLI veya IDE açıkken yenile. AtrisTracker quota servisinden doğrudan okur; statusline/telemetry kurulumu gerekmez.'
     : activeTab === 'codex'
@@ -160,9 +177,11 @@ export default function App() {
             <AccountSelector accounts={currentAccounts} selectedAccountEmail={selectedEmail} onSelectAccount={handleSelectAccount} onDeleteAccount={handleDeleteAccount} lastSync={currentData?.timestamp} />
             {currentData ? (
               <>
-                <RadialProgress percentage={currentData?.rolling_5h_percent ?? currentData?.usage_percent ?? null} label={`${currentToolTitle} 5-Saatlik Limit`} />
-                <CountdownTimer resetTimeISO={currentData?.next_5h_reset_at} title="5-Saatlik Kota Sıfırlaması" />
-                <WeeklyTimeline weeklyUsagePercent={currentData?.weekly_usage_percent ?? currentData?.weekly_usage_count ?? null} weeklyResetISO={currentData?.weekly_reset_at} />
+                <RadialProgress percentage={primaryPercent} label={primaryLabel} />
+                <CountdownTimer resetTimeISO={primaryResetISO} title={primaryResetTitle} windowSeconds={hasFiveHour ? 5 * 60 * 60 : 7 * 24 * 60 * 60} />
+                {hasFiveHour && (
+                  <WeeklyTimeline weeklyUsagePercent={currentData?.weekly_usage_percent ?? currentData?.weekly_usage_count ?? null} weeklyResetISO={currentData?.weekly_reset_at} />
+                )}
                 <HistoryChart historyData={historyData} />
               </>
             ) : (
