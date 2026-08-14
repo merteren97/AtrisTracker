@@ -40,7 +40,12 @@ export default function OverviewView({ usageData }) {
         {tools.map((tool) => {
           const Icon = tool.icon;
           const data = tool.data || null;
-          const rawPercent = data?.rolling_5h_percent ?? data?.usage_percent;
+          const hasFiveHour = data?.rolling_5h_percent != null || data?.usage_percent != null;
+          const rawPercent =
+            data?.rolling_5h_percent ??
+            data?.usage_percent ??
+            data?.weekly_usage_percent ??
+            data?.weekly_usage_count;
           const hasData =
             rawPercent !== null &&
             rawPercent !== undefined &&
@@ -80,7 +85,7 @@ export default function OverviewView({ usageData }) {
                 </div>
                 <div className="flex items-center justify-between text-[9px] text-slate-400 font-mono">
                   <span>{hasData ? `%${percent} kullanıldı` : 'Tahmini değer gösterilmiyor'}</span>
-                  <span>5h Rolling Window</span>
+                  <span>{hasFiveHour ? '5h Rolling Window' : 'Haftalık Pencere'}</span>
                 </div>
               </div>
             </div>

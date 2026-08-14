@@ -3,7 +3,7 @@ import { Clock } from 'lucide-react';
 
 const EMPTY_TIME = { hours: 0, minutes: 0, seconds: 0, totalSeconds: 0 };
 
-export default function CountdownTimer({ resetTimeISO, title = '5 Saatlik Limit Sıfırlanması' }) {
+export default function CountdownTimer({ resetTimeISO, title = '5 Saatlik Limit Sıfırlanması', windowSeconds = 5 * 60 * 60 }) {
   const [timeLeft, setTimeLeft] = useState(EMPTY_TIME);
   const targetMs = resetTimeISO ? new Date(resetTimeISO).getTime() : NaN;
   const hasReset = Number.isFinite(targetMs);
@@ -29,9 +29,8 @@ export default function CountdownTimer({ resetTimeISO, title = '5 Saatlik Limit 
     return () => clearInterval(interval);
   }, [hasReset, targetMs]);
 
-  const totalWindowSeconds = 5 * 60 * 60;
   const elapsedPercent = hasReset
-    ? Math.min(100, Math.max(0, ((totalWindowSeconds - timeLeft.totalSeconds) / totalWindowSeconds) * 100))
+    ? Math.min(100, Math.max(0, ((windowSeconds - timeLeft.totalSeconds) / windowSeconds) * 100))
     : 0;
 
   const formatTwoDigits = (num) => String(num).padStart(2, '0');
@@ -77,6 +76,21 @@ export default function CountdownTimer({ resetTimeISO, title = '5 Saatlik Limit 
           style={{ width: `${elapsedPercent}%` }}
         />
       </div>
+
+      {hasReset && (
+        <div className="flex items-center justify-between text-[9px] text-slate-500 font-mono">
+          <span>Sıfırlanma tarihi</span>
+          <span className="text-slate-300 font-semibold">
+            {new Date(targetMs).toLocaleString('tr-TR', {
+              weekday: 'short',
+              day: 'numeric',
+              month: 'short',
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
+          </span>
+        </div>
+      )}
     </div>
   );
 }

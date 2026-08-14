@@ -52,6 +52,103 @@ async function run() {
   assert.equal(quota.fiveHour.usedPercent, 20);
   assert.equal(quota.weekly.usedPercent, 35);
 
+  // POSIX process discovery must extract the CSRF token from the language
+  // server command line and keep the agy CLI tokenless.
+  const posixProcesses = antigravity.parsePosixProcessRows([
+    '  100 /usr/bin/node other-process',
+    '  4242 /home/mert/.gemini/antigravity-cli/bin/language_server_linux_x64 --app_data_dir antigravity-cli --csrf_token 550e8400-e29b-41d4-a716-446655440000 --port 43123',
+    '  4243 /home/mert/.gemini/antigravity-cli/bin/agy',
+    '  4244 /opt/Antigravity.app/Contents/Resources/bin/language_server_macos_arm --app_data_dir antigravity --csrf_token abc-def-123',
+  ].join('\n'));
+  assert.deepEqual(
+    posixProcesses.map((p) => [p.pid, p.csrfToken]),
+    [
+      [4242, '550e8400-e29b-41d4-a716-446655440000'],
+      [4243, ''],
+      [4244, 'abc-def-123'],
+    ]
+  );
+
+  // The Windows PowerShell script must be newline-joined and encoded so the
+  // whole script survives the command line (spaces alone broke it: statement
+  // and pipeline landed on the same line).
+  const windowsProbe = new AntigravityLocalQuotaProbe({ platform: 'win32' });
+  const script = Buffer.from(windowsProbe.buildWindowsProcessCommand(), 'utf16le').toString('base64');
+  const decoded = Buffer.from(script, 'base64').toString('utf16le');
+  assert.ok(decoded.includes('Get-CimInstance Win32_Process'));
+  assert.ok(decoded.includes('\n'));
+  assert.ok(decoded.includes('--csrf_token'));
+  const windowsRows = windowsProbe.parseWindowsProcessRows(
+    JSON.stringify([
+      { ProcessId: 4242, Name: 'language_server_windows_x64.exe', CommandLine: 'C:\\Users\\Mert\\.gemini\\antigravity-cli\\bin\\language_server_windows_x64.exe --csrf_token tok-123' },
+      { ProcessId: 4243, Name: 'agy.exe', CommandLine: 'C:\\Users\\Mert\\AppData\\Local\\agy\\bin\\agy.exe' },
+    ])
+  );
+  assert.equal(windowsRows[0].csrfToken, 'tok-123');
+  assert.equal(windowsRows[1].csrfToken, '');
+
+  // Legacy GetUserStatus payloads expose per-model quota windows. Resets hours
+  // away map to the 5h window; resets days away map to the weekly window.
+  const userStatus = antigravity.parseUserStatusQuota({
+    userStatus: {
+      email: 'mert@example.com',
+      cascadeModelConfigData: {
+        clientModelConfigs: [
+          { label: 'Gemini 3.7 Flash (Medium)', quotaInfo: { remainingFraction: 0.7, resetTime: new Date(Date.now() + 2 * 3600_000).toISOString() } },
+          { label: 'Gemini 3.5 Pro (High)', quotaInfo: { remainingFraction: 0.85, resetTime: new Date(Date.now() + 4 * 3600_000).toISOString() } },
+          { label: 'Gemini 3 Flash (Low)', quotaInfo: { remainingFraction: 0.55, resetTime: new Date(Date.now() + 3 * 24 * 3600_000).toISOString() } },
+          { label: 'Claude Opus 4.5', quotaInfo: { remainingFraction: 0.9, resetTime: new Date(Date.now() + 6 * 24 * 3600_000).toISOString() } },
+        ],
+      },
+    },
+  });
+  assert.equal(userStatus.fiveHour.usedPercent, 30);
+  assert.equal(userStatus.weekly.usedPercent, 45);
+
+  // The local Connect RPC must send the CSRF token header when the caller
+  // provides one, and must stay tokenless for the agy CLI.
+  const http = require('http');
+  const { once } = require('events');
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => { body += chunk; });
+    req.on('end', () => {
+      if (req.url.includes('RetrieveUserQuotaSummary')) {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ response: { groups: [{ displayName: 'Gemini Models', buckets: [
+          { bucketId: 'gemini-5h', displayName: 'Five Hour Limit', remainingFraction: 0.8 },
+          { bucketId: 'gemini-weekly', displayName: 'Weekly Limit', remainingFraction: 0.65, resetTime: '2026-08-17T08:29:00Z' },
+        ] }] } }));
+      } else if (req.url.includes('GetUserStatus')) {
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ userStatus: { email: 'mert@example.com' } }));
+      } else {
+        res.statusCode = 404;
+        res.end('{}');
+      }
+    });
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const { port } = server.address();
+  const recordedHeaders = [];
+  server.on('request', (req) => recordedHeaders.push(req.headers));
+  try {
+    const withCsrf = await windowsProbe.fetchFromPort(port, 'csrf-token-123');
+    assert.equal(withCsrf.accountEmail, 'mert@example.com');
+    assert.equal(withCsrf.fiveHour.usedPercent, 20);
+    const summaryHeader = recordedHeaders.find((h) => h['x-codeium-csrf-token']);
+    assert.ok(summaryHeader, 'expected x-codeium-csrf-token header');
+    assert.equal(summaryHeader['x-codeium-csrf-token'], 'csrf-token-123');
+
+    recordedHeaders.length = 0;
+    const withoutCsrf = await windowsProbe.fetchFromPort(port, '');
+    assert.equal(withoutCsrf.fiveHour.usedPercent, 20);
+    assert.ok(recordedHeaders.every((h) => !h['x-codeium-csrf-token']));
+  } finally {
+    server.close();
+  }
+
   const codex = new CodexAppServerQuota({ platform: 'linux' });
   const codexWindows = codex.mapRateLimits({ rateLimits: {
     primary: { usedPercent: 23.4, windowDurationMins: 300, resetsAt: 1_786_400_000 },

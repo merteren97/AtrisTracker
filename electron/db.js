@@ -273,6 +273,24 @@ class UsageDatabase {
     );
   }
 
+  // Removes an account together with its quota history. The currently logged-in
+  // (active) account is protected so a live session can never be wiped.
+  deleteAccount(tool, email) {
+    if (!this.db || !tool || !email) return false;
+    const normalizedEmail = this.normalizeEmail(email);
+    const account = this.queryOne(
+      'SELECT * FROM accounts WHERE tool = ? AND email = ?',
+      [tool, normalizedEmail]
+    );
+    if (!account) return false;
+    if (account.active === 1) return false;
+
+    this.db.run('DELETE FROM quota_snapshots WHERE tool = ? AND account_email = ?', [tool, normalizedEmail]);
+    this.db.run('DELETE FROM accounts WHERE tool = ? AND email = ?', [tool, normalizedEmail]);
+    this.save();
+    return true;
+  }
+
   getActiveAccounts() {
     if (!this.db) return [];
     return this.queryAll(
