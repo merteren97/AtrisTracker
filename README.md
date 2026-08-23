@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.jpg" width="160" height="160" alt="AtrisTracker Logo" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(6, 182, 212, 0.3);"/>
+  <img src="assets/logo.png" width="160" height="160" alt="AtrisTracker Logo" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(6, 182, 212, 0.3);"/>
 </p>
 
 <h1 align="center">AtrisTracker</h1>
@@ -121,7 +121,8 @@ npm run electron:start
 ```
 AtrisTracker/
 ├── assets/
-│   └── logo.jpg               # Generated high-res AtrisTracker logo
+│   ├── logo.svg               # Transparent canonical AtrisTracker mark
+│   └── logo.png               # High-resolution transparent raster export
 ├── electron/
 │   ├── main.js                # Main process, overlay window & tray setup
 │   ├── preload.js             # IPC security context bridge
