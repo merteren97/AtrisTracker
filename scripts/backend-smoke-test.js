@@ -19,6 +19,16 @@ async function run() {
   assert.equal(codex.fiveHour.usedPercent, 18);
   assert.equal(codex.weekly.usedPercent, 41);
 
+  const resetOnly = scanner.createSnapshot(
+    'codex',
+    'reset-only@example.com',
+    { resetAt: '2026-08-10T13:00:00Z' },
+    null,
+    'test-reset-only'
+  );
+  assert.equal(resetOnly.scan_status, 'live');
+  assert.equal(scanner.hasObservedQuota(resetOnly), true);
+
   const telemetryCapturedAt = Date.parse('2026-08-10T12:00:00Z');
   const antigravity = scanner.collectQuotaWindows(
     {
@@ -227,6 +237,64 @@ async function run() {
       db.getLatestSnapshotByAccount('antigravity', 'first@example.com').rolling_5h_percent,
       20
     );
+
+    // A provider may legitimately expose only its weekly window. The latest
+    // snapshot must clear an old 5h window instead of carrying it forward.
+    db.addSnapshot({
+      tool: 'codex',
+      account_email: 'weekly-only@example.com',
+      rolling_5h_percent: 38,
+      next_5h_reset_at: '2026-08-10T15:00:00Z',
+      weekly_usage_percent: 27,
+      weekly_reset_at: '2026-08-14T00:00:00Z',
+      source: 'test',
+    });
+    db.addSnapshot({
+      tool: 'codex',
+      account_email: 'weekly-only@example.com',
+      rolling_5h_percent: null,
+      next_5h_reset_at: null,
+      weekly_usage_percent: 64,
+      weekly_reset_at: '2026-08-17T00:00:00Z',
+      source: 'test',
+    });
+    const weeklyOnlySnapshot = db.getLatestSnapshotByAccount('codex', 'weekly-only@example.com');
+    assert.equal(weeklyOnlySnapshot.rolling_5h_percent, null);
+    assert.equal(weeklyOnlySnapshot.weekly_usage_percent, 64);
+    assert.equal(db.getUsageHistoryByAccount('codex', 'weekly-only@example.com').length, 2);
+
+    db.addSnapshot({
+      tool: 'codex',
+      account_email: 'five-hour-only@example.com',
+      rolling_5h_percent: 38,
+      next_5h_reset_at: '2026-08-10T15:00:00Z',
+      weekly_usage_percent: 27,
+      weekly_reset_at: '2026-08-14T00:00:00Z',
+      source: 'test',
+    });
+    db.addSnapshot({
+      tool: 'codex',
+      account_email: 'five-hour-only@example.com',
+      rolling_5h_percent: 51,
+      next_5h_reset_at: '2026-08-10T20:00:00Z',
+      weekly_usage_percent: null,
+      weekly_reset_at: null,
+      source: 'test',
+    });
+    const fiveHourOnlySnapshot = db.getLatestSnapshotByAccount('codex', 'five-hour-only@example.com');
+    assert.equal(fiveHourOnlySnapshot.rolling_5h_percent, 51);
+    assert.equal(fiveHourOnlySnapshot.weekly_usage_percent, null);
+
+    db.addSnapshot({
+      tool: 'codex',
+      account_email: 'zero-usage@example.com',
+      rolling_5h_percent: 0,
+      weekly_usage_percent: 0,
+      source: 'test',
+    });
+    const zeroUsageSnapshot = db.getLatestSnapshotByAccount('codex', 'zero-usage@example.com');
+    assert.equal(zeroUsageSnapshot.rolling_5h_percent, 0);
+    assert.equal(zeroUsageSnapshot.weekly_usage_percent, 0);
 
     const accounts = db.getAccountsByTool('antigravity');
     assert.equal(accounts[0].email, 'second@example.com');

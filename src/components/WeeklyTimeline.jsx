@@ -1,17 +1,25 @@
 import React from 'react';
 import { Calendar } from 'lucide-react';
 
-export default function WeeklyTimeline({ weeklyUsagePercent = null, weeklyResetISO }) {
+export default function WeeklyTimeline({ windowState = null, weeklyUsagePercent = null, weeklyResetISO }) {
+  const usagePercent = windowState ? windowState.percent : weeklyUsagePercent;
   const hasUsage =
-    weeklyUsagePercent !== null &&
-    weeklyUsagePercent !== undefined &&
-    weeklyUsagePercent !== '' &&
-    Number.isFinite(Number(weeklyUsagePercent));
-  const resetDate = weeklyResetISO ? new Date(weeklyResetISO) : null;
+    usagePercent !== null &&
+    usagePercent !== undefined &&
+    usagePercent !== '' &&
+    Number.isFinite(Number(usagePercent));
+  const resetDate = windowState?.resetAtMs
+    ? new Date(windowState.resetAtMs)
+    : weeklyResetISO
+      ? new Date(weeklyResetISO)
+      : null;
   const hasReset = resetDate && !Number.isNaN(resetDate.getTime());
+  const isExpired = windowState?.expired === true;
 
   let resetText = 'Reset bilgisi yok';
-  if (hasReset) {
+  if (isExpired) {
+    resetText = 'Resetlendi';
+  } else if (hasReset) {
     const diffMs = Math.max(0, resetDate.getTime() - Date.now());
     const daysLeft = Math.floor(diffMs / (1000 * 60 * 60 * 24));
     const hoursLeft = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
@@ -35,7 +43,7 @@ export default function WeeklyTimeline({ weeklyUsagePercent = null, weeklyResetI
           </span>
           <div className="flex items-baseline space-x-1 mt-0.5">
             <span className="text-base font-bold text-white font-mono">
-              {hasUsage ? `%${Math.round(Number(weeklyUsagePercent))}` : '—'}
+              {hasUsage ? `%${Math.round(Number(usagePercent))}` : '—'}
             </span>
             <span className="text-[10px] text-slate-400">kullanılan</span>
           </div>

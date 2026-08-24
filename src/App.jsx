@@ -10,6 +10,7 @@ import HistoryChart from './components/HistoryChart';
 import OverviewView from './components/OverviewView';
 import SettingsView from './components/SettingsView';
 import ConfirmDialog from './components/ConfirmDialog';
+import { getQuotaWindowState, getWindowLabel } from './quotaWindows';
 
 const TOOL_TABS = ['antigravity', 'codex', 'claudecode'];
 
@@ -20,6 +21,7 @@ export default function App() {
   const [selectedAccounts, setSelectedAccounts] = useState({ antigravity: null, codex: null, claudecode: null });
   const [usageData, setUsageData] = useState({ antigravity: null, codex: null, claude: null });
   const [historyData, setHistoryData] = useState([]);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   // Last known active (currently logged-in) account per tool, so a stale chip
   // selection never hides a newly switched login's fresh data.
   const activeAccountsRef = useRef({ antigravity: null, codex: null, claudecode: null });
@@ -140,27 +142,24 @@ export default function App() {
     return () => { if (typeof unsubscribe === 'function') unsubscribe(); };
   }, [fetchUsageData]);
 
+  useEffect(() => {
+    const interval = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   const currentData = activeTab === 'antigravity' ? usageData.antigravity : activeTab === 'codex' ? usageData.codex : activeTab === 'claudecode' ? usageData.claude : null;
   const currentToolTitle = activeTab === 'antigravity' ? 'Antigravity CLI' : activeTab === 'codex' ? 'Codex CLI' : activeTab === 'claudecode' ? 'Claude Code' : 'Genel Özet';
   const currentAccounts = accountsByTool[activeTab] || [];
   const selectedEmail = selectedAccounts[activeTab] || currentData?.account_email || currentAccounts[0]?.email;
-  // When the provider has no 5-hour window (e.g. some Codex accounts), promote
-  // the weekly value to the foreground instead of showing an empty gauge.
-  const hasFiveHour =
-    currentData?.rolling_5h_percent != null || currentData?.usage_percent != null;
-  const primaryPercent =
-    currentData?.rolling_5h_percent ??
-    currentData?.usage_percent ??
-    currentData?.weekly_usage_percent ??
-    currentData?.weekly_usage_count ??
-    null;
-  const primaryLabel = hasFiveHour
-    ? `${currentToolTitle} 5-Saatlik Limit`
-    : `${currentToolTitle} Haftalık Limit`;
-  const primaryResetISO = hasFiveHour ? currentData?.next_5h_reset_at : currentData?.weekly_reset_at;
-  const primaryResetTitle = hasFiveHour
-    ? '5-Saatlik Kota Sıfırlaması'
-    : 'Haftalık Kota Sıfırlaması';
+  const windowState = getQuotaWindowState(currentData, nowMs);
+  const primaryWindow = windowState.primary;
+  const primaryPercent = primaryWindow?.percent ?? null;
+  const primaryLabel = primaryWindow
+    ? `${currentToolTitle} ${getWindowLabel(primaryWindow.kind)} Limit`
+    : `${currentToolTitle} Kota Limiti`;
+  const primaryResetTitle = primaryWindow
+    ? `${getWindowLabel(primaryWindow.kind)} Kota Sıfırlaması`
+    : 'Kota Sıfırlaması';
   const emptyHint = activeTab === 'antigravity'
     ? 'Antigravity CLI veya IDE açıkken yenile. AtrisTracker quota servisinden doğrudan okur; statusline/telemetry kurulumu gerekmez.'
     : activeTab === 'codex'
@@ -172,17 +171,22 @@ export default function App() {
       <Header onRefresh={handleManualScan} isScanning={isScanning} onOpenSettings={() => setActiveTab('settings')} settingsActive={activeTab === 'settings'} />
       <NavigationTabs activeTab={activeTab} setActiveTab={setActiveTab} />
       <main className="flex-1 overflow-y-auto px-3 pb-3 space-y-3 custom-scrollbar">
-        {activeTab === 'settings' ? <SettingsView /> : activeTab === 'overview' ? <OverviewView usageData={usageData} /> : (
+        {activeTab === 'settings' ? <SettingsView /> : activeTab === 'overview' ? <OverviewView usageData={usageData} nowMs={nowMs} /> : (
           <>
             <AccountSelector accounts={currentAccounts} selectedAccountEmail={selectedEmail} onSelectAccount={handleSelectAccount} onDeleteAccount={handleDeleteAccount} lastSync={currentData?.timestamp} />
             {currentData ? (
               <>
-                <RadialProgress percentage={primaryPercent} label={primaryLabel} />
-                <CountdownTimer resetTimeISO={primaryResetISO} title={primaryResetTitle} windowSeconds={hasFiveHour ? 5 * 60 * 60 : 7 * 24 * 60 * 60} />
-                {hasFiveHour && (
-                  <WeeklyTimeline weeklyUsagePercent={currentData?.weekly_usage_percent ?? currentData?.weekly_usage_count ?? null} weeklyResetISO={currentData?.weekly_reset_at} />
+                <RadialProgress percentage={primaryPercent} label={primaryLabel} status={primaryWindow?.status} />
+                <CountdownTimer
+                  resetTimeISO={primaryWindow?.resetAtISO}
+                  title={primaryResetTitle}
+                  windowSeconds={primaryWindow?.durationSeconds}
+                  status={primaryWindow?.status}
+                />
+                {windowState.weekly.available && (
+                  <WeeklyTimeline windowState={windowState.weekly} />
                 )}
-                <HistoryChart historyData={historyData} />
+                <HistoryChart historyData={historyData} windowKind={primaryWindow?.kind} />
               </>
             ) : (
               <div className="p-3 bg-slate-900/50 rounded-xl border border-dashed border-white/10 flex items-start gap-2.5">

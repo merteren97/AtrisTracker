@@ -3,10 +3,16 @@ import { Clock } from 'lucide-react';
 
 const EMPTY_TIME = { hours: 0, minutes: 0, seconds: 0, totalSeconds: 0 };
 
-export default function CountdownTimer({ resetTimeISO, title = '5 Saatlik Limit Sıfırlanması', windowSeconds = 5 * 60 * 60 }) {
+export default function CountdownTimer({
+  resetTimeISO,
+  title = '5 Saatlik Limit Sıfırlanması',
+  windowSeconds = 5 * 60 * 60,
+  status = 'active',
+}) {
   const [timeLeft, setTimeLeft] = useState(EMPTY_TIME);
   const targetMs = resetTimeISO ? new Date(resetTimeISO).getTime() : NaN;
-  const hasReset = Number.isFinite(targetMs);
+  const isReset = status === 'reset';
+  const hasReset = !isReset && Number.isFinite(targetMs);
 
   useEffect(() => {
     if (!hasReset) {
@@ -29,7 +35,9 @@ export default function CountdownTimer({ resetTimeISO, title = '5 Saatlik Limit 
     return () => clearInterval(interval);
   }, [hasReset, targetMs]);
 
-  const elapsedPercent = hasReset
+  const elapsedPercent = isReset
+    ? 100
+    : hasReset
     ? Math.min(100, Math.max(0, ((windowSeconds - timeLeft.totalSeconds) / windowSeconds) * 100))
     : 0;
 
@@ -43,12 +51,14 @@ export default function CountdownTimer({ resetTimeISO, title = '5 Saatlik Limit 
           <span>{title}</span>
         </div>
         <span className="text-[10px] text-cyan-400/80 font-mono font-medium">
-          {hasReset ? `%${Math.round(elapsedPercent)} Tamamlandı` : 'Reset bilgisi yok'}
+          {isReset ? 'Resetlendi' : hasReset ? `%${Math.round(elapsedPercent)} Tamamlandı` : 'Reset bilgisi yok'}
         </span>
       </div>
 
       <div className="flex items-center justify-center space-x-2 py-1.5 bg-slate-950/70 rounded-lg border border-white/5 font-mono">
-        {hasReset ? (
+        {isReset ? (
+          <span className="text-sm font-semibold text-emerald-400 py-1">Kota sıfırlandı</span>
+        ) : hasReset ? (
           <>
             <div className="flex flex-col items-center">
               <span className="text-lg font-bold text-white leading-none">{formatTwoDigits(timeLeft.hours)}</span>
@@ -77,7 +87,7 @@ export default function CountdownTimer({ resetTimeISO, title = '5 Saatlik Limit 
         />
       </div>
 
-      {hasReset && (
+      {(hasReset || isReset) && (
         <div className="flex items-center justify-between text-[9px] text-slate-500 font-mono">
           <span>Sıfırlanma tarihi</span>
           <span className="text-slate-300 font-semibold">

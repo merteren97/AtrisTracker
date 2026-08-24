@@ -1,7 +1,8 @@
 import React from 'react';
 import { Cpu, Terminal, Sparkles } from 'lucide-react';
+import { getQuotaWindowState, getWindowLabel } from '../quotaWindows';
 
-export default function OverviewView({ usageData }) {
+export default function OverviewView({ usageData, nowMs = Date.now() }) {
   const tools = [
     {
       id: 'antigravity',
@@ -40,18 +41,11 @@ export default function OverviewView({ usageData }) {
         {tools.map((tool) => {
           const Icon = tool.icon;
           const data = tool.data || null;
-          const hasFiveHour = data?.rolling_5h_percent != null || data?.usage_percent != null;
-          const rawPercent =
-            data?.rolling_5h_percent ??
-            data?.usage_percent ??
-            data?.weekly_usage_percent ??
-            data?.weekly_usage_count;
-          const hasData =
-            rawPercent !== null &&
-            rawPercent !== undefined &&
-            rawPercent !== '' &&
-            Number.isFinite(Number(rawPercent));
-          const percent = hasData ? Math.round(Number(rawPercent)) : 0;
+          const windowState = getQuotaWindowState(data, nowMs);
+          const primary = windowState.primary;
+          const hasData = primary?.percent !== null && primary?.percent !== undefined;
+          const percent = hasData ? Math.round(Number(primary.percent)) : 0;
+          const hasWeeklySecondary = windowState.weekly.available && primary?.kind !== 'weekly';
 
           return (
             <div
@@ -84,10 +78,20 @@ export default function OverviewView({ usageData }) {
                   />
                 </div>
                 <div className="flex items-center justify-between text-[9px] text-slate-400 font-mono">
-                  <span>{hasData ? `%${percent} kullanıldı` : 'Tahmini değer gösterilmiyor'}</span>
-                  <span>{hasFiveHour ? '5h Rolling Window' : 'Haftalık Pencere'}</span>
+                  <span>{primary?.expired ? 'Resetlendi' : hasData ? `%${percent} kullanıldı` : 'Tahmini değer gösterilmiyor'}</span>
+                  <span>{primary ? `${getWindowLabel(primary.kind)} Pencere` : 'Pencere yok'}</span>
                 </div>
               </div>
+
+              {hasWeeklySecondary && (
+                <div className="flex items-center justify-between text-[9px] text-violet-300/90 font-mono border-t border-white/5 pt-1.5">
+                  <span>Haftalık Pencere</span>
+                  <span>
+                    {windowState.weekly.percent === null ? '—' : `%${Math.round(windowState.weekly.percent)}`}
+                    {windowState.weekly.expired ? ' • Resetlendi' : ''}
+                  </span>
+                </div>
+              )}
             </div>
           );
         })}

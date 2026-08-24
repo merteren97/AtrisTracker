@@ -50,7 +50,9 @@ class CLIScanner {
     return (
       this.toFiniteNumber(snapshot?.rolling_5h_percent) !== null ||
       this.toFiniteNumber(snapshot?.weekly_usage_percent) !== null ||
-      this.toFiniteNumber(snapshot?.weekly_usage_count) !== null
+      this.toFiniteNumber(snapshot?.weekly_usage_count) !== null ||
+      Boolean(snapshot?.next_5h_reset_at) ||
+      Boolean(snapshot?.weekly_reset_at)
     );
   }
 
@@ -152,6 +154,8 @@ class CLIScanner {
   createSnapshot(tool, accountEmail, fiveHour, weekly, source) {
     const fiveHourPercent = this.clampPercent(fiveHour?.usedPercent);
     const weeklyPercent = this.clampPercent(weekly?.usedPercent);
+    const fiveHourResetAt = this.normalizeReset(fiveHour?.resetAt);
+    const weeklyResetAt = this.normalizeReset(weekly?.resetAt);
     return {
       tool,
       account_email: accountEmail || null,
@@ -159,12 +163,18 @@ class CLIScanner {
       limit_count: fiveHourPercent === null ? null : 100,
       used_count: fiveHourPercent,
       rolling_5h_percent: fiveHourPercent,
-      next_5h_reset_at: this.normalizeReset(fiveHour?.resetAt),
+      next_5h_reset_at: fiveHourResetAt,
       weekly_usage_count: weeklyPercent,
       weekly_usage_percent: weeklyPercent,
-      weekly_reset_at: this.normalizeReset(weekly?.resetAt),
+      weekly_reset_at: weeklyResetAt,
       source,
-      scan_status: fiveHourPercent !== null || weeklyPercent !== null ? 'live' : 'unavailable',
+      scan_status:
+        fiveHourPercent !== null ||
+        weeklyPercent !== null ||
+        fiveHourResetAt !== null ||
+        weeklyResetAt !== null
+          ? 'live'
+          : 'unavailable',
     };
   }
 

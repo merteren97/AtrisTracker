@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function RadialProgress({ percentage = null, label = '5h Rolling Limit' }) {
+export default function RadialProgress({ percentage = null, label = '5h Rolling Limit', status = 'active' }) {
   const radius = 64;
   const strokeWidth = 10;
   const circumference = 2 * Math.PI * radius;
@@ -18,7 +18,10 @@ export default function RadialProgress({ percentage = null, label = '5h Rolling 
     ? 'text-emerald-400 bg-emerald-950/50 border-emerald-500/30'
     : 'text-slate-300 bg-slate-800/60 border-slate-600/30';
 
-  if (hasData && clampedPercent >= 85) {
+  if (status === 'reset') {
+    badgeText = 'Resetlendi';
+    badgeStyle = 'text-emerald-400 bg-emerald-950/50 border-emerald-500/30';
+  } else if (hasData && clampedPercent >= 85) {
     badgeText = 'Kritik Limit';
     badgeStyle = 'text-rose-400 bg-rose-950/50 border-rose-500/30';
   } else if (hasData && clampedPercent >= 60) {
