@@ -52,6 +52,12 @@ async function run() {
   assert.equal(quota.fiveHour.usedPercent, 20);
   assert.equal(quota.weekly.usedPercent, 35);
 
+  const weeklyOnlyQuota = antigravity.parseQuotaSummary({ response: { groups: [{ displayName: 'Gemini Models', buckets: [
+    { bucketId: 'gemini-weekly', displayName: 'Weekly Limit', remainingFraction: 0.4, resetTime: '2026-08-28T12:00:00Z' },
+  ] }] } });
+  assert.equal(weeklyOnlyQuota.fiveHour, null);
+  assert.equal(weeklyOnlyQuota.weekly.usedPercent, 60);
+
   // POSIX process discovery must extract the CSRF token from the language
   // server command line and keep the agy CLI tokenless.
   const posixProcesses = antigravity.parsePosixProcessRows([
@@ -156,6 +162,12 @@ async function run() {
   } });
   assert.equal(codexWindows.fiveHour.usedPercent, 23.4);
   assert.equal(codexWindows.weekly.usedPercent, 57);
+
+  const codexWeeklyOnly = codex.mapRateLimits({ rateLimits: {
+    secondary: { usedPercent: 64, windowDurationMins: 10_080, resetsAt: 1_786_800_000 },
+  } });
+  assert.equal(codexWeeklyOnly.fiveHour, null);
+  assert.equal(codexWeeklyOnly.weekly.usedPercent, 64);
 
   const envToken = `sk-ant-oat01-${'a'.repeat(40)}`;
   const envResolver = new ClaudeCredentialsResolver({ platform: 'linux', env: { CLAUDE_CODE_OAUTH_TOKEN: envToken } });

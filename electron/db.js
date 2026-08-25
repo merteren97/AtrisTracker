@@ -159,7 +159,7 @@ class UsageDatabase {
     // A scanner may discover an account before the provider exposes quota data.
     // In that case record the account, but never write invented zero/default usage.
     this.saveAccount(tool, email, true);
-    if (fiveHour === null && weekly === null) return false;
+    if (fiveHour === null && fiveHourReset === null && weekly === null && weeklyReset === null) return false;
 
     const latest = this.queryOne(
       `SELECT five_hour_used_percent, five_hour_reset_at, weekly_used_percent, weekly_reset_at, source
@@ -169,11 +169,16 @@ class UsageDatabase {
       [tool, email]
     );
 
+    // A live provider response is authoritative for the windows it reports.
+    // Do not carry an old window into a new snapshot: Codex can legitimately
+    // expose only its weekly limit, and stale 5h data would change the UI's
+    // primary window selection. A fully unavailable scan is not persisted
+    // above, so this does not replace a good snapshot with an empty one.
     const effective = {
-      fiveHour: fiveHour !== null ? fiveHour : this.clampPercent(latest?.five_hour_used_percent),
-      fiveHourReset: fiveHourReset || latest?.five_hour_reset_at || null,
-      weekly: weekly !== null ? weekly : this.clampPercent(latest?.weekly_used_percent),
-      weeklyReset: weeklyReset || latest?.weekly_reset_at || null,
+      fiveHour,
+      fiveHourReset,
+      weekly,
+      weeklyReset,
     };
 
     const unchanged =

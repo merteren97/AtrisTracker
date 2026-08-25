@@ -1,8 +1,9 @@
 import React from 'react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { TrendingUp } from 'lucide-react';
+import { FIVE_HOUR_KIND, getHistoryPercent, getWindowLabel } from '../quotaWindows';
 
-export default function HistoryChart({ historyData = [] }) {
+export default function HistoryChart({ historyData = [], windowKind = FIVE_HOUR_KIND }) {
   if (!historyData || historyData.length === 0) {
     return (
       <div className="p-3 bg-slate-900/60 rounded-xl border border-white/5 text-center text-xs text-slate-400">
@@ -11,21 +12,32 @@ export default function HistoryChart({ historyData = [] }) {
     );
   }
 
-  // Format chart items
-  const formattedData = historyData.map((item) => {
-    const date = new Date(item.timestamp);
-    return {
-      time: date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
-      usage: Math.round(item.rolling_5h_percent || item.usage_percent || 0),
-    };
-  });
+  const windowLabel = getWindowLabel(windowKind);
+  const formattedData = historyData
+    .map((item) => {
+      const date = new Date(item.timestamp);
+      const usage = getHistoryPercent(item, windowKind);
+      return {
+        time: date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+        usage: usage === null ? null : Math.round(usage),
+      };
+    })
+    .filter((item) => item.usage !== null);
+
+  if (formattedData.length === 0) {
+    return (
+      <div className="p-3 bg-slate-900/60 rounded-xl border border-white/5 text-center text-xs text-slate-400">
+        {windowLabel} kullanım geçmişi henüz yok.
+      </div>
+    );
+  }
 
   return (
     <div className="p-3 bg-slate-900/60 rounded-xl border border-white/5 backdrop-blur-sm space-y-2">
       <div className="flex items-center justify-between">
         <div className="flex items-center space-x-1.5 text-xs font-semibold text-slate-200">
           <TrendingUp className="w-3.5 h-3.5 text-cyan-400" />
-          <span>5 Saatlik Kullanım Trendi (%)</span>
+          <span>{windowLabel} Kullanım Trendi (%)</span>
         </div>
         <span className="text-[9px] text-slate-400 font-mono">SQLite Snapshot</span>
       </div>
@@ -50,7 +62,7 @@ export default function HistoryChart({ historyData = [] }) {
                 color: '#fff',
                 fontFamily: 'monospace',
               }}
-              formatter={(value) => [`%${value}`, 'Kullanım']}
+              formatter={(value) => [`%${value}`, `${windowLabel} Kullanım`]}
             />
             <Area
               type="monotone"
