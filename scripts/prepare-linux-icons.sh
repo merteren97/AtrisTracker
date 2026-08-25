@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SOURCE_ICON="${1:-assets/logo.jpg}"
+SOURCE_ICON="${1:-assets/logo.png}"
 OUTPUT_DIR="${2:-build/icons}"
 
 if [[ ! -f "$SOURCE_ICON" ]]; then

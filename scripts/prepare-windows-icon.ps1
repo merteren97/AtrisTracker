@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
 
 $root = Split-Path -Parent $PSScriptRoot
-$source = Join-Path $root 'assets\logo.jpg'
+$source = Join-Path $root 'assets\logo.png'
 $outDir = Join-Path $root 'build'
 $output = Join-Path $outDir 'windows-icon.png'
 

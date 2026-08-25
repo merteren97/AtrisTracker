@@ -2,7 +2,7 @@
 
 AtrisTracker ships Linux builds as AppImage and Debian packages.
 
-The source application logo is stored as `assets/logo.jpg` for the renderer. Electron Builder's Linux icon pipeline expects PNG/SVG input, so CI prepares a standard freedesktop PNG icon set under `build/icons/` before packaging.
+The source application logo is stored as the transparent `assets/logo.png` raster export (with `assets/logo.svg` as the canonical vector master). Electron Builder's Linux icon pipeline expects PNG/SVG input, so CI prepares a standard freedesktop PNG icon set under `build/icons/` before packaging.
 
 On Ubuntu/Debian, local packaging requires ImageMagick:
 

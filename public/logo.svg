@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="135 180 760 710" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <linearGradient id="tracker-mark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00E5FF" />
+      <stop offset="55%" stop-color="#00D0F0" />
+      <stop offset="100%" stop-color="#00B8E6" />
+    </linearGradient>
+    <linearGradient id="tracker-ring" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1A7693" />
+      <stop offset="100%" stop-color="#12445E" />
+    </linearGradient>
+  </defs>
+  <path
+    fill="url(#tracker-mark)"
+    d="M153 822h146l303-480V201L309 344l103 61z"
+  />
+  <path
+    fill="url(#tracker-mark)"
+    d="m602 436 176 386H359l123-196 154 88-104-169z"
+  />
+  <g fill="none" stroke="url(#tracker-ring)" stroke-width="8">
+    <circle cx="800" cy="790" r="72" />
+    <circle cx="800" cy="790" r="53" />
+    <circle cx="800" cy="790" r="35" />
+  </g>
+  <circle cx="800" cy="790" r="27" fill="url(#tracker-mark)" />
+</svg>

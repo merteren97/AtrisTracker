@@ -30,9 +30,9 @@ export default function Header({ onRefresh, isScanning, onOpenSettings, settings
     <header className="app-drag-region flex items-center justify-between px-3 py-2 bg-slate-900/90 border-b border-white/10 backdrop-blur-md select-none rounded-t-xl">
       <div className="flex items-center space-x-2">
         <img
-          src="./logo.jpg"
+          src="./logo.png"
           alt="AtrisTracker Logo"
-          className="w-6 h-6 rounded-lg object-cover border border-cyan-500/30 shadow-glow"
+          className="w-6 h-6 rounded-lg object-contain border border-cyan-500/30 shadow-glow"
         />
         <div className="flex flex-col">
           <span className="text-xs font-bold bg-gradient-to-r from-blue-400 via-cyan-300 to-indigo-300 bg-clip-text text-transparent">

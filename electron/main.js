@@ -54,7 +54,7 @@ function sendUpdateStatus(status) {
 }
 
 function createWindow() {
-  const iconPath = path.join(__dirname, '../assets/logo.jpg');
+  const iconPath = path.join(__dirname, '../assets/logo.png');
   const shouldShow = !startHidden;
   startHidden = false;
   mainWindow = new BrowserWindow({
@@ -91,7 +91,7 @@ async function runUsageScan() {
 }
 
 function createTray() {
-  const iconPath = path.join(__dirname, '../assets/logo.jpg');
+  const iconPath = path.join(__dirname, '../assets/logo.png');
   const icon = fs.existsSync(iconPath) ? nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 }) : nativeImage.createEmpty();
   tray = new Tray(icon);
   const startupStatus = startupManager?.getStatus() || { supported: false, enabled: false };

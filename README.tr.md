@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.jpg" width="160" height="160" alt="AtrisTracker Logosu" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(6, 182, 212, 0.3);"/>
+  <img src="assets/logo.png" width="160" height="160" alt="AtrisTracker Logosu" style="border-radius: 24px; box-shadow: 0 10px 30px rgba(6, 182, 212, 0.3);"/>
 </p>
 
 <h1 align="center">AtrisTracker</h1>
