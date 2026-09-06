@@ -169,6 +169,65 @@ async function run() {
   assert.equal(codexWeeklyOnly.fiveHour, null);
   assert.equal(codexWeeklyOnly.weekly.usedPercent, 64);
 
+  // Regression: the live app-server now also reports unrelated per-limit
+  // windows (base_model_inference / gpt-reserve) inside rateLimitsByLimitId.
+  // Its exhausted weekly-sized window (100%) must never displace the real
+  // Codex weekly quota (45%) — that bug pinned weekly usage at 100% with the
+  // gpt-reserve reset date.
+  const multiLimit = codex.mapRateLimits({
+    rateLimits: {
+      limitId: 'codex',
+      primary: { usedPercent: 96, windowDurationMins: 300, resetsAt: 1_788_713_944 },
+      secondary: { usedPercent: 45, windowDurationMins: 10_080, resetsAt: 1_789_235_576 },
+    },
+    rateLimitsByLimitId: {
+      base_model_inference: {
+        limitId: 'base_model_inference',
+        limitName: 'gpt-reserve',
+        primary: { usedPercent: 100, windowDurationMins: 10_080, resetsAt: 1_789_166_504 },
+        secondary: null,
+      },
+      codex: {
+        limitId: 'codex',
+        primary: { usedPercent: 96, windowDurationMins: 300, resetsAt: 1_788_713_944 },
+        secondary: { usedPercent: 45, windowDurationMins: 10_080, resetsAt: 1_789_235_576 },
+      },
+    },
+  });
+  assert.equal(multiLimit.fiveHour.usedPercent, 96);
+  assert.equal(multiLimit.weekly.usedPercent, 45);
+  assert.equal(multiLimit.weekly.resetAt, new Date(1_789_235_576 * 1000).toISOString());
+
+  // A window whose reset time already passed belongs to an expired cycle and
+  // must lose against the still-active window of the same kind.
+  const mixedAge = codex.mapRateLimits({
+    rateLimits: {
+      limitId: 'codex',
+      primary: { usedPercent: 96, windowDurationMins: 300, resetsAt: 1_788_713_944 },
+      secondary: { usedPercent: 100, windowDurationMins: 10_080, resetsAt: 1_000_000_000 },
+      windows: [{ usedPercent: 12, windowDurationMins: 10_080, resetsAt: 1_789_235_576 }],
+    },
+  });
+  assert.equal(mixedAge.weekly.usedPercent, 12);
+
+  // Without a top-level summary the by-limit map is the fallback source; the
+  // "codex" entry still wins over unrelated exhausted limits.
+  const byIdOnly = codex.mapRateLimits({
+    rateLimitsByLimitId: {
+      base_model_inference: {
+        limitId: 'base_model_inference',
+        primary: { usedPercent: 100, windowDurationMins: 10_080, resetsAt: 1_789_166_504 },
+      },
+      codex: {
+        limitId: 'codex',
+        primary: { usedPercent: 30, windowDurationMins: 300, resetsAt: 1_788_713_944 },
+        secondary: { usedPercent: 8, windowDurationMins: 10_080, resetsAt: 1_789_235_576 },
+      },
+    },
+  });
+  assert.equal(byIdOnly.fiveHour.usedPercent, 30);
+  assert.equal(byIdOnly.weekly.usedPercent, 8);
+
   const envToken = `sk-ant-oat01-${'a'.repeat(40)}`;
   const envResolver = new ClaudeCredentialsResolver({ platform: 'linux', env: { CLAUDE_CODE_OAUTH_TOKEN: envToken } });
   assert.equal(envResolver.readOAuthToken(), envToken);

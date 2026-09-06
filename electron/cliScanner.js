@@ -495,7 +495,29 @@ class CLIScanner {
     };
   }
 
+  // Session logs can carry the same rateLimitsByLimitId shape as the app-server.
+  // Only the authoritative limit's windows (rate_limits.limit_id, or "codex")
+  // may drive the UI, so an exhausted unrelated limit (e.g.
+  // base_model_inference / gpt-reserve weekly at 100%) never displaces the real
+  // Codex weekly quota.
+  selectCodexRateLimitRoot(rateLimits) {
+    if (!rateLimits || typeof rateLimits !== 'object') return null;
+    const byId = rateLimits.rate_limits_by_limit_id || rateLimits.rateLimitsByLimitId || null;
+    if (!byId || typeof byId !== 'object') return rateLimits;
+    const limitId = rateLimits.limit_id || rateLimits.limitId || null;
+    const preferred = limitId
+      ? byId[limitId] || byId[String(limitId).toLowerCase()]
+      : byId.codex || Object.values(byId)[0];
+    if (preferred && typeof preferred === 'object') {
+      return preferred.rate_limits || preferred.rateLimits || preferred;
+    }
+    return rateLimits;
+  }
+
   mapCodexWindows(rateLimits) {
+    const root = this.selectCodexRateLimitRoot(rateLimits);
+    if (!root) return { fiveHour: null, weekly: null };
+
     const windows = [];
     const pushWindow = (window, label) => {
       if (!window || typeof window !== 'object') return;
@@ -508,20 +530,33 @@ class CLIScanner {
       });
     };
 
-    pushWindow(rateLimits.primary, 'primary');
-    pushWindow(rateLimits.secondary, 'secondary');
-    if (Array.isArray(rateLimits.windows)) {
-      rateLimits.windows.forEach((window, index) => pushWindow(window, `window ${index}`));
+    pushWindow(root.primary, 'primary');
+    pushWindow(root.secondary, 'secondary');
+    if (Array.isArray(root.windows)) {
+      root.windows.forEach((window, index) => pushWindow(window, `window ${index}`));
     }
 
-    let fiveHour = windows.find((window) => window.kind === '5h') || null;
-    let weekly = windows.find((window) => window.kind === 'weekly') || null;
+    // Ignore duplicate window rows (same kind, percent and reset) that a
+    // summary and its by-limit copy can produce.
+    const unique = windows.filter(
+      (window, index, all) =>
+        index ===
+        all.findIndex(
+          (other) =>
+            other.kind === window.kind &&
+            other.usedPercent === window.usedPercent &&
+            other.resetAt === window.resetAt
+        )
+    );
 
-    if (!fiveHour && rateLimits.primary && !this.toFiniteNumber(rateLimits.primary.window_minutes)) {
-      fiveHour = windows[0] || null;
+    let fiveHour = unique.find((window) => window.kind === '5h') || null;
+    let weekly = unique.find((window) => window.kind === 'weekly') || null;
+
+    if (!fiveHour && root.primary && !this.toFiniteNumber(root.primary.window_minutes)) {
+      fiveHour = unique[0] || null;
     }
-    if (!weekly && rateLimits.secondary && !this.toFiniteNumber(rateLimits.secondary.window_minutes)) {
-      weekly = windows[1] || null;
+    if (!weekly && root.secondary && !this.toFiniteNumber(root.secondary.window_minutes)) {
+      weekly = unique[1] || null;
     }
     return { fiveHour, weekly };
   }

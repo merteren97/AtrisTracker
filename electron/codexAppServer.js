@@ -175,18 +175,44 @@ class CodexAppServerQuota {
     return error.message || error.data?.message || fallback;
   }
 
-  mapRateLimits(payload) {
-    const roots = [];
-    const topLevel = payload?.rateLimits || payload?.rate_limits || payload || null;
-    if (topLevel && typeof topLevel === 'object') roots.push(topLevel);
+  // Codex reports the plan-level window pair in `rateLimits` and then repeats the
+  // same `codex` entry (plus unrelated per-limit entries such as
+  // base_model_inference / gpt-reserve) inside `rateLimitsByLimitId`. Pooling
+  // every entry and taking the tightest window per kind can pick an exhausted
+  // *other* limit's weekly-sized window (100%) instead of the real Codex weekly
+  // quota, pinning weekly usage at 100% with the wrong reset date. Only the
+  // authoritative limit's windows may drive the UI.
+  selectAuthoritativeRoots(payload) {
+    if (!payload || typeof payload !== 'object') return [];
+    const summary = payload.rateLimits || payload.rate_limits || null;
+    const byId = payload.rateLimitsByLimitId || payload.rate_limits_by_limit_id || null;
 
-    const byId = payload?.rateLimitsByLimitId || payload?.rate_limits_by_limit_id;
+    if (summary && typeof summary === 'object') {
+      const summaryLimitId = summary.limitId || summary.limit_id || null;
+      if (summaryLimitId && byId && typeof byId === 'object') {
+        const entry = byId[summaryLimitId] || byId[String(summaryLimitId).toLowerCase()];
+        if (entry && typeof entry === 'object') {
+          return [entry.rateLimits || entry.rate_limits || entry];
+        }
+      }
+      return [summary];
+    }
+
     if (byId && typeof byId === 'object') {
-      for (const value of Object.values(byId)) {
-        if (value && typeof value === 'object') roots.push(value.rateLimits || value);
+      const entries = Object.entries(byId);
+      if (entries.length) {
+        const preferred = entries.find(([id]) => id === 'codex') || entries[0];
+        const entry = preferred[1];
+        if (entry && typeof entry === 'object') {
+          return [entry.rateLimits || entry.rate_limits || entry];
+        }
       }
     }
 
+    return [payload];
+  }
+
+  mapRateLimits(payload) {
     const candidates = [];
     const pushWindow = (window, label) => {
       if (!window || typeof window !== 'object') return;
@@ -208,7 +234,7 @@ class CodexAppServerQuota {
       candidates.push({ kind, usedPercent, resetAt });
     };
 
-    for (const root of roots) {
+    for (const root of this.selectAuthoritativeRoots(payload)) {
       pushWindow(root.primary, 'primary');
       pushWindow(root.secondary, 'secondary');
       if (Array.isArray(root.windows)) {
@@ -219,7 +245,13 @@ class CodexAppServerQuota {
     const select = (kind) => {
       const matches = candidates.filter((candidate) => candidate.kind === kind);
       if (!matches.length) return null;
-      return matches.sort((left, right) => (right.usedPercent ?? -1) - (left.usedPercent ?? -1))[0];
+      // A window whose reset time already passed is an expired cycle and must
+      // never be reported as the live quota; prefer still-active windows.
+      const active = matches.filter(
+        (candidate) => !candidate.resetAt || Date.parse(candidate.resetAt) > Date.now()
+      );
+      const pool = active.length ? active : matches;
+      return pool.sort((left, right) => (right.usedPercent ?? -1) - (left.usedPercent ?? -1))[0];
     };
 
     return { fiveHour: select('5h'), weekly: select('weekly') };
