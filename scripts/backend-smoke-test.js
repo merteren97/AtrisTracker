@@ -358,6 +358,32 @@ async function run() {
     );
     assert.equal(db.getUsageHistoryByAccount('claudecode', 'old-claude@example.com').length, 0);
     assert.equal(db.deleteAccount('claudecode', 'does-not-exist@example.com'), false);
+
+    // Weekly usage trend: one point per day, using that day's last snapshot.
+    const insertTrendRow = (accountEmail, weekly, resetAt, fetchedAt) => {
+      db.db.run(
+        `INSERT INTO quota_snapshots
+           (tool, account_email, weekly_used_percent, weekly_reset_at, source, fetched_at)
+         VALUES (?, ?, ?, ?, 'test', ?)`,
+        ['codex', accountEmail, weekly, resetAt, fetchedAt]
+      );
+    };
+    insertTrendRow('trend@example.com', 20, '2026-08-14T00:00:00Z', '2026-08-11T08:00:00Z');
+    insertTrendRow('trend@example.com', 35, '2026-08-14T00:00:00Z', '2026-08-11T20:00:00Z');
+    insertTrendRow('trend@example.com', 50, '2026-08-15T00:00:00Z', '2026-08-12T09:00:00Z');
+    insertTrendRow('trend@example.com', 10, '2026-08-16T00:00:00Z', '2026-08-13T07:00:00Z');
+    insertTrendRow('trend@example.com', 12, '2026-08-16T00:00:00Z', '2026-08-13T19:00:00Z');
+    db.save();
+    const weeklyTrend = db.getWeeklyUsageTrend('codex', 'trend@example.com', 7);
+    assert.deepEqual(
+      weeklyTrend.map((row) => row.weekly_usage_percent),
+      [35, 50, 12]
+    );
+    assert.deepEqual(
+      weeklyTrend.map((row) => row.timestamp),
+      ['2026-08-11T12:00:00.000Z', '2026-08-12T12:00:00.000Z', '2026-08-13T12:00:00.000Z']
+    );
+    assert.equal(db.getWeeklyUsageTrend('codex', 'no-trend@example.com', 7).length, 0);
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }

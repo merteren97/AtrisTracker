@@ -344,6 +344,36 @@ class UsageDatabase {
     return rows.reverse().map((row) => this.toLegacyShape(row));
   }
 
+  // Weekly usage trend: one point per day for the trailing N days, using that
+  // day's LAST observed snapshot (highest id). Weekly percent only moves when
+  // the provider reports a new value, so the last reading per day is the honest
+  // daily level and still reflects a mid-cycle reset.
+  getWeeklyUsageTrend(tool, email, days = 7) {
+    if (!this.db) return [];
+    const safeDays = Math.max(1, Math.min(30, Number.parseInt(days, 10) || 7));
+    const rows = this.queryAll(
+      `SELECT date(fetched_at) AS day, weekly_used_percent, weekly_reset_at
+       FROM quota_snapshots
+       WHERE tool = ? AND account_email = ? AND weekly_used_percent IS NOT NULL
+       GROUP BY day
+       HAVING id = MAX(id)
+       ORDER BY day DESC
+       LIMIT ?`,
+      [tool, this.normalizeEmail(email), safeDays]
+    );
+    return rows
+      .reverse()
+      .map((row) => ({
+        tool,
+        account_email: email,
+        weekly_usage_count: row.weekly_used_percent,
+        weekly_usage_percent: row.weekly_used_percent,
+        weekly_reset_at: row.weekly_reset_at,
+        timestamp: `${row.day}T12:00:00.000Z`,
+        source: 'weekly-trend:last-snapshot-per-day',
+      }));
+  }
+
   normalizeLimit(limit) {
     const value = Number.parseInt(limit, 10);
     if (!Number.isFinite(value)) return 20;

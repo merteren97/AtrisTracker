@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSnapshotByAccount: (tool, email) => ipcRenderer.invoke('get-snapshot-by-account', tool, email),
   deleteAccount: (tool, email) => ipcRenderer.invoke('delete-account', tool, email),
   getUsageHistoryByAccount: (tool, email, limit) => ipcRenderer.invoke('get-usage-history-by-account', tool, email, limit),
+  getWeeklyUsageTrendByAccount: (tool, email, days) => ipcRenderer.invoke('get-weekly-usage-trend', tool, email, days),
   getStartupStatus: () => ipcRenderer.invoke('get-startup-status'),
   setStartupEnabled: (enabled) => ipcRenderer.invoke('set-startup-enabled', Boolean(enabled)),
   getUpdateStatus: () => ipcRenderer.invoke('get-update-status'),

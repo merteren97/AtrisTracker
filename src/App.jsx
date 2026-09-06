@@ -10,7 +10,7 @@ import HistoryChart from './components/HistoryChart';
 import OverviewView from './components/OverviewView';
 import SettingsView from './components/SettingsView';
 import ConfirmDialog from './components/ConfirmDialog';
-import { getQuotaWindowState, getWindowLabel } from './quotaWindows';
+import { getQuotaWindowState, getWindowLabel, WEEKLY_KIND } from './quotaWindows';
 
 const TOOL_TABS = ['antigravity', 'codex', 'claudecode'];
 
@@ -21,6 +21,7 @@ export default function App() {
   const [selectedAccounts, setSelectedAccounts] = useState({ antigravity: null, codex: null, claudecode: null });
   const [usageData, setUsageData] = useState({ antigravity: null, codex: null, claude: null });
   const [historyData, setHistoryData] = useState([]);
+  const [weeklyTrendData, setWeeklyTrendData] = useState([]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   // Last known active (currently logged-in) account per tool, so a stale chip
   // selection never hides a newly switched login's fresh data.
@@ -60,9 +61,16 @@ export default function App() {
       setUsageData({ antigravity: agSnapshot, codex: codexSnapshot, claude: claudeSnapshot });
 
       if (isToolTab) {
-        const history = await window.electronAPI.getUsageHistoryByAccount(currentToolKey, selectedEmail, 15);
+        const [history, weeklyTrend] = await Promise.all([
+          window.electronAPI.getUsageHistoryByAccount(currentToolKey, selectedEmail, 15),
+          window.electronAPI.getWeeklyUsageTrendByAccount(currentToolKey, selectedEmail, 7),
+        ]);
         setHistoryData(history || []);
-      } else setHistoryData([]);
+        setWeeklyTrendData(weeklyTrend || []);
+      } else {
+        setHistoryData([]);
+        setWeeklyTrendData([]);
+      }
       return;
     }
 
@@ -187,6 +195,9 @@ export default function App() {
                   <WeeklyTimeline windowState={windowState.weekly} />
                 )}
                 <HistoryChart historyData={historyData} windowKind={primaryWindow?.kind} />
+                {windowState.weekly.available && primaryWindow?.kind !== WEEKLY_KIND && (
+                  <HistoryChart historyData={weeklyTrendData} windowKind={WEEKLY_KIND} timeFormat="date" />
+                )}
               </>
             ) : (
               <div className="p-3 bg-slate-900/50 rounded-xl border border-dashed border-white/10 flex items-start gap-2.5">

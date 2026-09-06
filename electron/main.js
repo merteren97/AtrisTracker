@@ -200,6 +200,7 @@ ipcMain.handle('get-accounts-by-tool', (_event, tool) => (db ? db.getAccountsByT
 ipcMain.handle('get-snapshot-by-account', (_event, tool, email) => db ? db.getLatestSnapshotByAccount(tool, email) : null);
 ipcMain.handle('delete-account', (_event, tool, email) => (db ? db.deleteAccount(tool, email) : false));
 ipcMain.handle('get-usage-history-by-account', (_event, tool, email, limit) => db ? db.getUsageHistoryByAccount(tool, email, limit) : []);
+ipcMain.handle('get-weekly-usage-trend', (_event, tool, email, days) => db ? db.getWeeklyUsageTrend(tool, email, days) : []);
 ipcMain.handle('get-startup-status', () => startupManager ? startupManager.getStatus() : { supported: false, enabled: false });
 ipcMain.handle('set-startup-enabled', (_event, enabled) => startupManager ? startupManager.setEnabled(Boolean(enabled)) : { supported: false, enabled: false });
 ipcMain.handle('get-update-status', () => updateManager ? updateManager.getStatus() : null);
